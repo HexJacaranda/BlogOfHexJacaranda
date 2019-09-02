@@ -33,7 +33,7 @@
     PTR_ObjHeader GetHeader()
     {
         LIMITED_METHOD_DAC_CONTRACT;
-        return dac_cast &lt PTR_ObjHeader &gt(this) - 1;
+        return dac_cast<PTR_ObjHeader>(this) - 1;
     }
 
 这里的 dac\_cast 我们暂且不管，可以将其视作static\_cast，简单地转换this指针类型
@@ -150,12 +150,12 @@
             }
             //接下来的处理和检查是应对GC时可能出现的Access Violation
             //假设有这样的类型
-            //ValueType1 &lt ValueType2 &gt[] array
+            //ValueType1<ValueType2>[] array
             //这里的ValueType1和ValueType2定义在不同的Assembly里面，这样的话，如果要获取
             //TypeHandle,需要在Type1所在Module里的m_AssemblyRefByNameTable变量
             //里查找，但是！假如目标Appdomain正在卸载，就会导致Access Violation
             //类似也有相同情形
-            //RefType1 &lt RefType2 &gt array
+            //RefType1<RefType2>array
             //RefType2 所在Module在GC之前就被卸载
             //这样的话，GC会由AppDomain的卸载触发,以下是流程
             //AppDomain::Unload ->AppDomain::Exit -> GCInterface::AddMemoryPressure ->
@@ -226,7 +226,7 @@
 
     //为简便起见，作者已经直接翻译了一些无关紧要宏
     PTR_MethodTable* GetMethodTablePtr() const{
-         return dac_cast &lt PTR_MethodTable* &gt((ULONG_PTR)&(this)->m_pMethTab);
+         return dac_cast<PTR_MethodTable*>((ULONG_PTR)&(this)->m_pMethTab);
     }
 
 GCSafe版本
@@ -236,7 +236,7 @@ GCSafe版本
         //第二个临着LSB位的是保留位，所以如果我们想要在GC期间
         //安全获取MethodTable，我们必须清零最后两位
         //3的二进制是11取反即00
-        return dac_cast &lt PTR_MethodTable &gt((dac_cast<ULONG_PTR>(m_pMethTab)) & ~((UINT_PTR)3));
+        return dac_cast<PTR_MethodTable>((dac_cast<ULONG_PTR>(m_pMethTab)) & ~((UINT_PTR)3));
     }
 
 接下来两个版本就很原始粗暴了，如同他们的名字一样“Raw”
@@ -267,7 +267,7 @@ GCSafe版本
         //我们甚至可以不是Array来调用这个方法，这个方法只是在读取Object内存而已
         //与Array无关，但是ComponentSize会乘出这个值，因此m_NumComponents必须是
         //ArrayBase的第一个字段
-        return dac_cast &lt PTR_ArrayBase &gt (this)->m_NumComponents;
+        return dac_cast<PTR_ArrayBase>(this)->m_NumComponents;
     }
 
 这里注释可能会让人有些疑惑，不过我们可以看到 object.h 开头的注释:
@@ -376,13 +376,11 @@ Interface的接口，不过目前没有看见。在C#里面，我们仍然使用
 
     SyncBlock *GetSyncBlock()
     {
-        WRAPPER_NO_CONTRACT;
         return GetHeader()->GetSyncBlock();
     }
 
     DWORD GetSyncBlockIndex()
     {
-        WRAPPER_NO_CONTRACT;
         return GetHeader()->GetSyncBlockIndex();
     }
 
@@ -498,7 +496,6 @@ Interface的接口，不过目前没有看见。在C#里面，我们仍然使用
 
     static UINT GetOffsetOfFirstField()
     {
-        LIMITED_METHOD_CONTRACT;
         return sizeof(Object);
     }
 
