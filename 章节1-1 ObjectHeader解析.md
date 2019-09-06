@@ -4,7 +4,7 @@
 Object仅仅只是对服务进行了转发。在这节中我们就将解析ObjectHeader，
 同时也一并连带SyncBlock，SyncBlockCache，AwareLock进行解析。
 
-##2. 先导知识
+## 2. 先导知识
 
 ### SyncBlock介绍
     1. 每一个对象都在负Offset处有一个ObjectHeader，ObjectHeader中含有一个
