@@ -1312,7 +1312,7 @@ Enc是CLR的一项技术，全称叫Edit and Continue，这两个函数实现都
 #### m_FreeSyncTableIndex
     我们分配大量SyncTableEntry并存于数组中，这个索引指示从未用过和已经用过的SyncTableEntry的边界
 #### m_FreeSyncTableList
-    第一个在FreeList可用SyncTableEntry的索引
+    第一个在FreeList可用SyncTableEntry的索引,在这个Index处的下一个索引被储存在m_Object中(右移一位,低位没有进行使用)
 #### m_SyncTableSize
     SyncTable大小
 #### m_OldSyncTables
@@ -1519,11 +1519,11 @@ Enc是CLR的一项技术，全称叫Edit and Continue，这两个函数实现都
         if (m_FreeSyncTableList)
         {
             //如果索引不为0
-            //新索引就是原有的一半
+            //根据说明获取下一个可用Entry的索引
             indexNewEntry = (DWORD)(m_FreeSyncTableList >> 1);
-            //确保第一个Entry已经死亡
+            //根据下面的储存设置，检查最后一位是否为1
             _ASSERTE ((size_t)SyncTableEntry::GetSyncTableEntry()[indexNewEntry].m_Object.Load() & 1);
-            //设置新SyncTableList
+            //设置新m_FreeSyncTableList，设置最后一位来确保有效性
             m_FreeSyncTableList = (size_t)SyncTableEntry::GetSyncTableEntry()[indexNewEntry].m_Object.Load() & ~1;
         }
         else if ((indexNewEntry = (DWORD)(m_FreeSyncTableIndex)) >= m_SyncTableSize)
