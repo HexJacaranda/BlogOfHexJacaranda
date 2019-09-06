@@ -2217,14 +2217,40 @@ Reset也相当简单
 
 ### 函数定义
 
-    AwareLock::LockState::CompareExchangeAcquire AwareLock::LockState::CompareExchange AwareLock::LockState::DecrementSpinnerCount AwareLock::LockState::DecrementWaiterCount AwareLock::LockState::GetMonitorHeldState 
+    AwareLock::LockState::CompareExchangeAcquire 
+    AwareLock::LockState::CompareExchange 
+    AwareLock::LockState::DecrementSpinnerCount 
+    AwareLock::LockState::DecrementWaiterCount 
+    AwareLock::LockState::GetMonitorHeldState 
     AwareLock::LockState::GetState 
     AwareLock::LockState::HasAnySpinners 
-    AwareLock::LockState::HasAnyWaiters AwareLock::LockState::InitializeToLockedWithNoWaiters AwareLock::LockState::IncrementWaiterCount 
+    AwareLock::LockState::HasAnyWaiters 
+    AwareLock::LockState::InitializeToLockedWithNoWaiters 
+    AwareLock::LockState::IncrementWaiterCount 
     AwareLock::LockState::InterlockedObserveWakeSignal_Try_LockAndUnregisterWaiter 
     AwareLock::LockState::InterlockedTry_LockAndUnregisterSpinner 
     AwareLock::LockState::InterlockedTry_LockAndUnregisterWaiterAndObserveWakeSignal 
-    AwareLock::LockState::InterlockedTry_LockOrRegisterSpinner AwareLock::LockState::InterlockedTryLock AwareLock::LockState::InterlockedTryLock AwareLock::LockState::InterlockedTryLock_Or_RegisterWaiter AwareLock::LockState::InterlockedTrySetShouldNotPreemptWaitersIfNecessary AwareLock::LockState::InterlockedTrySetShouldNotPreemptWaitersIfNecessary AwareLock::LockState::InterlockedUnlock AwareLock::LockState::InterlockedUnregisterSpinner_TryLock AwareLock::LockState::InvertIsLocked AwareLock::LockState::InterlockedUnregisterWaiter AwareLock::LockState::InvertIsWaiterSignaledToWake AwareLock::LockState::InvertShouldNotPreemptWaiters AwareLock::LockState::IsLocked AwareLock::LockState::IsUnlockedWithNoWaiters AwareLock::LockState::IsWaiterSignaledToWake AwareLock::LockState::LockState AwareLock::LockState::NeedToSignalWaiter AwareLock::LockState::ShouldNonWaiterAttemptToAcquireLock AwareLock::LockState::ShouldNotPreemptWaiters AwareLock::LockState::TryIncrementSpinnerCount AwareLock::LockState::VolatileLoadWithoutBarrier AwareLock::LockState::VolatileLoad
+    AwareLock::LockState::InterlockedTry_LockOrRegisterSpinner 
+    AwareLock::LockState::InterlockedTryLock 
+    AwareLock::LockState::InterlockedTryLock 
+    AwareLock::LockState::InterlockedTryLock_Or_RegisterWaiter
+    AwareLock::LockState::InterlockedTrySetShouldNotPreemptWaitersIfNecessary                AwareLock::LockState::InterlockedTrySetShouldNotPreemptWaitersIfNecessary 
+    AwareLock::LockState::InterlockedUnlock 
+    AwareLock::LockState::InterlockedUnregisterSpinner_TryLock 
+    AwareLock::LockState::InvertIsLocked       
+    AwareLock::LockState::InterlockedUnregisterWaiter 
+    AwareLock::LockState::InvertIsWaiterSignaledToWake 
+    AwareLock::LockState::InvertShouldNotPreemptWaiters
+    AwareLock::LockState::IsLocked 
+    AwareLock::LockState::IsUnlockedWithNoWaiters 
+    AwareLock::LockState::IsWaiterSignaledToWake 
+    AwareLock::LockState::LockState 
+    AwareLock::LockState::NeedToSignalWaiter 
+    AwareLock::LockState::ShouldNonWaiterAttemptToAcquireLock 
+    AwareLock::LockState::ShouldNotPreemptWaiters 
+    AwareLock::LockState::TryIncrementSpinnerCount 
+    AwareLock::LockState::VolatileLoadWithoutBarrier 
+    AwareLock::LockState::VolatileLoad
 
 ### 函数解析
 
