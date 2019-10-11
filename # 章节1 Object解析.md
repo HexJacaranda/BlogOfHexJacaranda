@@ -290,7 +290,7 @@ GCSafe版本
     
     真实内存: [Header][     Object    ][其余内存]
     Object排布:       [MethodTablePtr][字段的开始的地方]
-    Array排布:                        [长度信息(int 4 bytes)][元素储存开始的地方]
+    Array排布:                        [长度信息(int 4 bytes)][其余信息]
 
 接下来看GetSize
 
@@ -320,10 +320,10 @@ GCSafe版本
         ReflectMethodObject 反射Method对象
         ReflectFieldObject  反射Field对象
     ArrayBase
-        I1Array 一维数组
-        I2Array 二维数组
+        I1Array 元素大小为1的数组
+        I2Array 
         ...
-        INArray N维数组
+        INArray 
         PtrArray 对象引用数组
     AssemblyBaseObject Assembly对象
 
