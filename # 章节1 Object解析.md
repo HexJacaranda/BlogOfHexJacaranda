@@ -309,23 +309,28 @@ GCSafe版本
         return s;
     }
 
-这里其实已经清楚了，ComponentSize是内建类型的特权，他们可以辅助GC进行优化。
+这里其实已经清楚了，Component/Size是内建类型的特权，他们可以辅助GC进行优化，
+是满足特殊内存排布的产物。
 我们再次回到开头查看注释，已然明了
     
     Object 基类
     StringObject 针对String操作特殊化的对象类型(UCS-2/UTF-16数据)，用于获取更好的性能
     Utf8StringObject 同上，只不过编码为UTF-8
-    BaseObjectWithCachedData 加一个字段进行缓存
-        ReflectClassBaseObject 反射对象基类
-        ReflectMethodObject 反射Method对象
-        ReflectFieldObject  反射Field对象
     ArrayBase
         I1Array 元素大小为1的数组
         I2Array 
         ...
         INArray 
         PtrArray 对象引用数组
+
+其余特殊对象
+    
+    BaseObjectWithCachedData 加一个字段进行缓存
+        ReflectClassBaseObject 反射对象基类
+        ReflectMethodObject 反射Method对象
+        ReflectFieldObject  反射Field对象
     AssemblyBaseObject Assembly对象
+
 
 接下来看一个有点意思的
 
@@ -337,8 +342,7 @@ GCSafe版本
 这里直接被标记为Unreachable，没有实现。 根据名字知道这是一个检测一个对象是否支持某个
 Interface的接口，不过目前没有看见。在C#里面，我们仍然使用这样的语句来判断是否实现Interface
 
-    Object.IsAssignableFrom()
-	
+    Object.IsAssignableFrom()	
 ### 基础服务
 #### Monitor
 这里我们只列举一些函数
@@ -366,7 +370,6 @@ Interface的接口，不过目前没有看见。在C#里面，我们仍然使用
 
     BOOL LeaveObjMonitorAtException()
     {
-        WRAPPER_NO_CONTRACT;
         return GetHeader()->LeaveObjMonitorAtException();
     }
 
