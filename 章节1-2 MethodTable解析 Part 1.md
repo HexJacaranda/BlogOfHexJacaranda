@@ -1,6 +1,16 @@
 # 一点写在开头的话
 上一章节貌似太过于长了，后面有时间会考虑进行分割。对于本次解析对象MethodTable也是如此，我将尽可能将内容分割开来。
 
+#勘误
+    1. 在DoFullyLoad中 ForwardedStruct 实际上应当被翻译为转发结构体，
+       这与运行时特性转发类型(Forward Type)有关，简单地来讲，这个特性
+       允许你将类型移动到另一个Assembly里面而不必重新编译。
+       比如：我们在开发时叫utility.dll的assembly中有一个example类，现在
+       我们需要重构这个example，并且放在新的assembly里，那么新版本的就是
+       utility.dll+新assembly，这会导致库中原有example无法被解析，所以
+       需要使用TypeForward特性
+
+
 # 章节1-2 MethodTable解析
 ## 前导知识
     1. 关于泛型:
@@ -1170,7 +1180,7 @@
                 }
                 else if (pMD->IsZapped() && pMD->HasForwardedValuetypeParameter())
                 {
-                    //如果此模块被激活且参数中含有前向声明的ValueType
+                    //如果此模块被激活且参数中含有转发的ValueType
                     //遍历并且加载引用程序集或者类型
                     pMD->WalkValueTypeParameters(this, LoadTypeDefOrRefAssembly, NULL);
                     locals.fDependsOnEquivalentOrForwardedStructs = TRUE;
@@ -1206,7 +1216,7 @@
         {
             if (!IsZapped())
             {     
-                //如果此类型声明了一个有等效类型或者前向声明的结构体参数
+                //如果此类型声明了一个有等效类型或者转发的结构体参数
                 //确保我们到这里并且在NGen的情况下也要提前加载这些结构体类型
                 SetDependsOnEquivalentOrForwardedStructs();
             }

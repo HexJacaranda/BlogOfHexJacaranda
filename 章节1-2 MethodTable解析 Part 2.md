@@ -650,6 +650,12 @@ DAC下对应的设置函数
         return MethodTable::GetMethodDescForSlotAddress(pCode);
     }
 
+##### 补充:
+下方函数的注释可能让人摸不着头脑，真实意思是：
+这个情况目前只针对委托的构造函数，因为这是唯一一个 fcall 里对一个实现有多个
+MethodDescriptor的类型。断言是为了防止BackPatch，实际上这个Assert应当放在
+SetSlot里面。
+
     static MethodDesc*  GetMethodDescForSlotAddress(PCODE addr, BOOL fSpeculative = FALSE)
     {
         //如果我们看到一个 fcall 实现被传入此函数，那么意味着 fcall 的
@@ -816,14 +822,13 @@ DAC下对应的设置函数
     WORD RawGetComponentSize()
     {
         return *(WORD*)&m_dwFlags;
-    }
+    } 
 
     //如果没有就返回0
     //Component Size实际上只是16位 WORD类型的，但此方法返回SIZE_T来确保
     //SIZE_T被用在每一个对象大小计算的地方。支持大于2GB的对象是很有必要的
     SIZE_T GetComponentSize()  
     {
-        LIMITED_METHOD_DAC_CONTRACT;
         return HasComponentSize() ? RawGetComponentSize() : 0;
     }
 
@@ -1019,7 +1024,157 @@ DAC下对应的设置函数
 
 #### 父接口
 
+    unsigned GetNumInterfaces()
+    {
+        return m_wNumInterfaces;
+    }
+
 #### 转换
+
+    对于以下函数有两个变种
+    CanCastTo[]
+        -需要时恢复已编码的指针
+        -可能抛出异常，可能触发GC
+        -返回Boolean
+    CanCastTo[]NoGC
+        -不会恢复已编码指针
+        -不会抛出，不会触发GC
+        -返回值为三值(能转换，不能转换，可能转换)
+        -可能转换意味着在编码指针上测试失败了
+         因此如果调用者很在意是否能转换，应当调用CanCastTo[]Restoring
+
+    BOOL CanCastToInterface(MethodTable *pTargetMT, TypeHandlePairList *pVisited = NULL)
+    {
+        if (!pTargetMT->HasVariance())
+        {
+            //如果没有协变或者逆变
+            //其中之一参与进了等效类型中
+            if (HasTypeEquivalence() || pTargetMT->HasTypeEquivalence())
+            {
+                //当前是接口，且与对应接口等效
+                if (IsInterface() && IsEquivalentTo(pTargetMT))
+                    return TRUE;
+                //是否实现了等效接口
+                return ImplementsEquivalentInterface(pTargetMT);
+            }
+            //直接返回非协变或逆变转换结果
+            return CanCastToNonVariantInterface(pTargetMT);
+        }
+        else
+        {
+            if (CanCastByVarianceToInterfaceOrDelegate(pTargetMT, pVisited))
+                return TRUE;
+        }
+    }
+
+    //能否通过协变或逆变转换到接口或者委托
+    BOOL CanCastByVarianceToInterfaceOrDelegate(MethodTable *pTargetMT, TypeHandlePairList *pVisited)
+    {
+        BOOL returnValue = FALSE;
+        EEClass *pClass = NULL;
+        //是否已经存在类型对
+        if (TypeHandlePairList::Exists(pVisited, this, pTargetMT))
+            goto Exit;
+        //校验ID和模块
+        if (GetTypeDefRid() != pTargetMT->GetTypeDefRid() || GetModule() != pTargetMT->GetModule())
+        {
+            goto Exit;
+        }
+        {
+            //获取EEClass
+            pClass = pTargetMT->GetClass();
+            //获取实例化列表，目标实例化列表
+            Instantiation inst = GetInstantiation();
+            Instantiation targetInst = pTargetMT->GetInstantiation();
+            for (DWORD i = 0; i < inst.GetNumArgs(); i++)
+            {
+                TypeHandle thArg = inst[i];
+                TypeHandle thTargetArg = targetInst[i];
+                //不等价
+                if (!thArg.IsEquivalentTo(thTargetArg))
+                {
+                    //获取参数协变/逆变性
+                    switch (pClass->GetVarianceOfTypeParameter(i))
+                    {
+                    case gpCovariant :
+                        //协变，如果此参数不能转换到目标参数，返回
+                        if (!thArg.IsBoxedAndCanCastTo(thTargetArg, &pairList))
+                            goto Exit;
+                        break;
+                    case gpContravariant :
+                        //逆变，如果此参数不能转换到目标参数，返回
+                        if (!thTargetArg.IsBoxedAndCanCastTo(thArg, &pairList))
+                            goto Exit;
+                        break;
+                    case gpNonVariant :
+                        //没有任何协变逆变，且不相容，返回
+                        goto Exit;
+                    default :
+                        _ASSERTE(!"Illegal variance annotation");
+                        goto Exit;
+                    }
+                }
+            }
+        }
+        //检查完全
+        returnValue = TRUE;
+    Exit:    
+        //出口
+        return returnValue;
+    }
+
+    BOOL CanCastToNonVariantInterface(MethodTable *pTargetMT)
+    {
+        //是否就为目标接口
+        if (this == pTargetMT)
+            return TRUE;
+        //是否实现了接口
+        return ImplementsInterfaceInline(pTargetMT);
+    }
+
+以下是NoGC版本的三值函数
+
+    TypeHandle::CastResult CanCastToInterfaceNoGC(MethodTable *pTargetMT)
+    {
+        //不是数组，没有参与类型等效，没有协变逆变
+        if (!pTargetMT->HasVariance() && !IsArray() && !HasTypeEquivalence() && !pTargetMT->HasTypeEquivalence())
+        {
+            return CanCastToNonVariantInterface(pTargetMT) ? TypeHandle::CanCast : TypeHandle::CannotCast;
+        }
+        else
+        {
+            //对协变逆变与等效类型持有保守态度
+            return TypeHandle::MaybeCast;
+        }
+    }
+
+    //转换类型
+    TypeHandle::CastResult CanCastToClassNoGC(MethodTable *pTargetMT)
+    {
+        //协变逆变类型保守估计
+        if (pTargetMT->HasVariance() || g_IBCLogger.InstrEnabled())
+        {
+            return TypeHandle::MaybeCast;
+        }
+        //等效类型需要走SlowPath
+        if (HasTypeEquivalence() || pTargetMT->HasTypeEquivalence())
+        {
+            return TypeHandle::MaybeCast;
+        }
+        else
+        {
+            //最后沿着继承链查找
+            PTR_VOID pMT = this;
+            do {
+                if (pMT == pTargetMT)
+                    return TypeHandle::CanCast;
+                pMT = MethodTable::GetParentMethodTableOrIndirection(pMT);
+            } while (pMT);
+        }
+        return TypeHandle::CannotCast;
+    }
+
+#### 等效类型
 
 #### 父类
 
@@ -1033,7 +1188,7 @@ DAC下对应的设置函数
 
 #### 附加Interface Map数据
 
-#### Virtual/Interface调用方案
+#### Virtual/Interface调用解析
 
 #### 协议实现
 
