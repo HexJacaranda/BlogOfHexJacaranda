@@ -1173,52 +1173,456 @@ SetSlot里面。
         }
         return TypeHandle::CannotCast;
     }
-
 #### 等效类型
+    BOOL IsEquivalentTo_Worker(MethodTable *pOtherMT COMMA_INDEBUG(TypeHandlePairList *pVisited))
+    {
+        //泛型与非泛型一致性
+        if (HasInstantiation() != pOtherMT->HasInstantiation())
+            return FALSE;
+        //如果是Array
+        if (IsArray())
+        {
+            //另一个不是Array或者维度不相同
+            if (!pOtherMT->IsArray() || GetRank() != pOtherMT->GetRank())
+                return FALSE;
+            //struct的Array有其自己的隐藏MethodTable并且会走这条路径
+            return (GetApproxArrayElementTypeHandle().IsEquivalentTo(pOtherMT->GetApproxArrayElementTypeHandle() COMMA_INDEBUG(&newVisited)));
+        }
+        //走Inner比较
+        return IsEquivalentTo_WorkerInner(pOtherMT COMMA_INDEBUG(&newVisited));
+    }
+
+    BOOL IsEquivalentTo_WorkerInner(MethodTable *pOtherMT COMMA_INDEBUG(TypeHandlePairList *pVisited))
+    {
+        TypeEquivalenceHashTable *typeHashTable = NULL;
+        AppDomain *pDomain = GetAppDomain();
+        if (pDomain != NULL)
+        {
+            //获取等效Hash表
+            typeHashTable = pDomain->GetTypeEquivalenceCache();
+            TypeEquivalenceHashTable::EquivalenceMatch match = typeHashTable->CheckEquivalence(TypeHandle(this), TypeHandle(pOtherMT));
+            //检查结果
+            switch (match)
+            {
+            case TypeEquivalenceHashTable::Match:
+                return TRUE;
+            case TypeEquivalenceHashTable::NoMatch:
+                return FALSE;
+            case TypeEquivalenceHashTable::MatchUnknown:
+                break;
+            default:
+                _ASSERTE(FALSE);
+                break;
+            }
+        }
+        BOOL fEquivalent = FALSE;
+        //检查是否为泛型
+        if (HasInstantiation())
+        {
+            //将泛型的协变逆变限制到Inteface上
+            if (!IsInterface() || !pOtherMT->IsInterface())
+            {
+                fEquivalent = FALSE;
+                goto EquivalenceCalculated;
+            }
+            Instantiation inst1 = GetInstantiation();
+            Instantiation inst2 = pOtherMT->GetInstantiation();
+            //检查参数个数
+            if (inst1.GetNumArgs() != inst2.GetNumArgs())
+            {
+                fEquivalent = FALSE;
+                goto EquivalenceCalculated;
+            }
+            //逐个比较参数
+            for (DWORD i = 0; i < inst1.GetNumArgs(); i++)
+            {
+                if (!inst1[i].IsEquivalentTo(inst2[i] COMMA_INDEBUG(pVisited)))
+                {
+                    fEquivalent = FALSE;
+                    goto EquivalenceCalculated;
+                }
+            }
+            if (GetTypeDefRid() == pOtherMT->GetTypeDefRid() && GetModule() == pOtherMT->GetModule())
+            {
+                //现在就可以确定MethodTable等效，我们只关心的是IList<IFoo>
+                //和IList<IBar>之间IFoo与IBar是等效的
+                fEquivalent = TRUE;
+            }
+            else
+            {
+                fEquivalent = FALSE;
+            }
+            goto EquivalenceCalculated;
+        }
+        //对Array检查
+        if (IsArray())
+        {
+            if (!pOtherMT->IsArray() || GetRank() != pOtherMT->GetRank())
+            {
+                fEquivalent = FALSE;
+                goto EquivalenceCalculated;
+            }
+            TypeHandle elementType1 = GetApproxArrayElementTypeHandle();
+            TypeHandle elementType2 = pOtherMT->GetApproxArrayElementTypeHandle();
+            fEquivalent = elementType1.IsEquivalentTo(elementType2 COMMA_INDEBUG(pVisited));
+            goto EquivalenceCalculated;
+        }
+        fEquivalent = CompareTypeDefsForEquivalence(GetCl(), pOtherMT->GetCl(), GetModule(), pOtherMT->GetModule(), NULL);
+    EquivalenceCalculated:
+        if (typeHashTable != NULL)
+        {
+            //均不是可卸载类型，可卸载类型结果不会被缓存
+            if ((!Collectible() && !pOtherMT->Collectible()))
+            {
+                auto match = fEquivalent ? TypeEquivalenceHashTable::Match : TypeEquivalenceHashTable::NoMatch;
+                typeHashTable->RecordEquivalence(TypeHandle(this), TypeHandle(pOtherMT), match);
+            }
+        }
+        //返回结果
+        return fEquivalent;
+    }
 
 #### 父类
+    //父类加载级别
+    BOOL HasApproxParent()
+    {
+         return (GetWriteableData()->m_dwFlags & MethodTableWriteableData::enum_flag_HasApproxParent) != 0;      
+    }
+    inline void SetHasExactParent()
+    {
+        FastInterlockAnd(&(GetWriteableDataForWrite()->m_dwFlags), ~MethodTableWriteableData::enum_flag_HasApproxParent);
+    }
 
+    //调用者必须知道父MethodTable不是已编码修复的
+    inline PTR_MethodTable GetParentMethodTable()
+    {
+        return ReadPointerMaybeNull(this, &MethodTable::m_pParentMethodTable, GetFlagHasIndirectParent());
+    }
+
+    //获取父MethodTable或者其Indirection
+    inline static PTR_VOID GetParentMethodTableOrIndirection(PTR_VOID pMT)
+    {
+        return PTR_VOID(*PTR_TADDR(dac_cast<TADDR>(pMT) + offsetof(MethodTable, m_pParentMethodTable)));
+    }
+
+    //父MethodTable是否为Indirection
+    inline bool IsParentMethodTableIndirectPointer()
+    {
+         return m_pParentMethodTable.IsIndirectPtrIndirect(GetFlagHasIndirectParent(), PARENT_MT_FIXUP_OFFSET);
+    }
+
+    //获取Indirection所指向的MethodTable指针
+    inline MethodTable ** GetParentMethodTableValuePtr()
+    {
+        return m_pParentMethodTable.GetValuePtrIndirect(GetFlagHasIndirectParent(), PARENT_MT_FIXUP_OFFSET);
+    }
+
+    //父类是否与给定MethodTable一致
+    BOOL ParentEquals(PTR_MethodTable pMT)
+    {
+        //有效性先验
+        PRECONDITION(IsParentMethodTablePointerValid());
+        g_IBCLogger.LogMethodTableAccess(this);
+        return GetParentMethodTable() == pMT;
+    }
+
+    //设置父MethodTable
+    void SetParentMethodTable (MethodTable *pParentMethodTable)
+    {     
+        PRECONDITION(!IsParentMethodTableIndirectPointerMaybeNull());
+        m_pParentMethodTable.SetValueMaybeNull(pParentMethodTable);
+    }
+
+    //在继承链上寻找，TypeDef相匹配的父类。
+    //这样有用的原因参见
+    //MethodTable::GetInstantiationOfParentClass
+    //Generics::GetExactInstantiationsOfMethodAndItsClassFromCallInformation
+    MethodTable * GetMethodTableMatchingParentClass(MethodTable * pWhichParent)
+    {
+        MethodTable *pMethodTableSearch = this;
+        //遍历继承链
+        while (pMethodTableSearch != NULL) 
+        {
+            if (pMethodTableSearch->HasSameTypeDefAs(pWhichParent))
+            {
+                return pMethodTableSearch;
+            }
+            pMethodTableSearch = pMethodTableSearch->GetParentMethodTable();
+        }
+    }
+##### 父类小小结
+m_pParentMethodTable可能有两种形式，一种为直接的MethodTable，另一种为指向MethodTable
+的Indirection
 #### EEClass
 
+    EEClass在实例化之间被共享
+    需要注意的是，普通情况下GetClass().GetMethodTable()==this并不成立
+
+    //此函数进行了转发到Nologging版本
+    PTR_EEClass GetClass();
+    inline PTR_EEClass GetClass_NoLogging()
+    {
+        //获取地址
+        TADDR addr = ReadPointer(this, &MethodTable::m_pCanonMT);
+        //低两位为10，则为EEClass指针
+        if ((addr & 2) == 0)
+        {
+            return PTR_EEClass(addr);
+        }
+    #ifdef FEATURE_PREJIT
+        //低位为01
+        if ((addr & 1) != 0)
+        {
+            //获取代表性指针地址，向前偏移三个指针长度
+            //这里实际上是指向Indirection的指针，其中指向了代表性MethodTable
+            TADDR canonicalMethodTable = *PTR_TADDR(addr - 3);
+            //在代表性MethodTable中获取EEClass
+            return PTR_EEClass(ReadPointer((MethodTable *) PTR_MethodTable(canonicalMethodTable), &MethodTable::m_pCanonMT));
+        }
+    #endif     
+        //否则向前偏移两个指针长度读取代表性指针
+        return PTR_EEClass(ReadPointer((MethodTable *) PTR_MethodTable(addr - 2), &MethodTable::m_pCanonMT));
+    }
+
+    //验证MethodTable(有AV风险)
+    BOOL ValidateWithPossibleAV()
+    {
+        //MethodTable有以下代表化的性质
+        //先代表化，再次代表化，最后检查结果是否为一致的
+        //这个性质对系统里的每一个有效对象都是成立的，但是需要持有一些
+        //其余的地址信息
+        //对于非泛型类，我们依赖于比较
+        //  object->methodtable->class->methodtable 与
+        //  object->methodtable
+        //对于泛型，上面的不起作用，我们必须比较
+        //  object->methodtable->class->methodtable->class 与
+        //  object->methodtable->class
+        //当然，这些验证MethodTable是否有效的方法还不够，我们需要更多的
+        //检验来确保这里的指针是有效的
+        PTR_EEClass pEEClass = this->GetClassWithPossibleAV();
+        return ((this == pEEClass->GetMethodTableWithPossibleAV()) ||
+        ((HasInstantiation() || IsArray()) &&
+        (pEEClass->GetMethodTableWithPossibleAV()->GetClassWithPossibleAV() == pEEClass)));
+    }
+
+    //检查EEClass指针是否有效
+    BOOL IsClassPointerValid()
+    {
+        TADDR addr = ReadPointer(this, &MethodTable::m_pCanonMT);
+        //获取低位比特位
+        LowBits lowBits = union_getLowBits(addr);
+        //是EEClass，检验是否为null
+        if (lowBits == UNION_EECLASS)
+        {
+            return !m_pEEClass.IsNull();
+        }
+        else if (lowBits == UNION_METHODTABLE)
+        {
+            //如果是MethodTable，那么就获取代表性MethodTable地址
+            //再检查共享的EEClass是否有效
+            TADDR canonicalMethodTable = union_getPointer(addr);
+            return !PTR_MethodTable(canonicalMethodTable)->m_pEEClass.IsNull();
+        }
+    #ifdef FEATURE_PREJIT   
+        else if (lowBits == UNION_INDIRECTION)
+        {
+            //PreJIT下储存在Indirection里，取出代表性MethodTable
+            TADDR canonicalMethodTable = *PTR_TADDR(union_getPointer(addr));
+            if (CORCOMPILE_IS_POINTER_TAGGED(canonicalMethodTable))
+                return FALSE;
+            return !PTR_MethodTable(canonicalMethodTable)->m_pEEClass.IsNull();
+        }
+    #endif
+        //不正常的EEClass指针
+        _ASSERTE(!"Malformed m_pEEClass in MethodTable");
+        return FALSE;
+    }
+
+##### EEClass小小结
+从上面两个函数可以看得出来，m_pCanonMT的储存规则是
+    
+    1. 普通非泛型或者代表性的MethodTable，EEClass指针直接存于m_pCanonMT中
+    2. 泛型实例共享的EEClass通过m_pCanonMT指向的代表性MethodTable获取
+    3. PreJIT的则是通过m_pCanonMT储存Indirection，在Indirection中获取代表性
+       MethodTable
+
 #### MethodTable构造
+这几个函数较为简单，不再讲解
 
+    inline void SetClass(EEClass *pClass);
+    inline void SetCanonicalMethodTable(MethodTable * pMT);
+    inline void SetHasInstantiation(BOOL fTypicalInstantiation, BOOL fSharedByGenericInstantiations);
 #### 接口实现
+    //检测接口实现的强制内联版本
+    BOOL ImplementsInterfaceInline(MethodTable *pInterface)
+    {
+        DWORD numInterfaces = GetNumInterfaces();
+        if (numInterfaces == 0)
+            return FALSE;
+        InterfaceInfo_t *pInfo = GetInterfaceMap();
+        do
+        {
+            if (pInfo->GetMethodTable() == pInterface)
+            {
+                //可扩展RCW需要特殊处理，因为他们的Map拥有运行时添加上去的接口
+                //这些接口会拥有一个起始偏移为-1的偏移量来表示这种情况
+                //我们不能把每一个此COM对象的实例都有这个接口因此FindInterface
+                //在这些接口上注定会失败的情况视作理所应当
+                //然而这里我们只考虑静态的Slot(m_wNumInterface不包含动态Slot)
+                //因此我们可以安全地忽略这个细节
+                return TRUE;
+            }
+            pInfo++;
+        }
+        while (--numInterfaces);
+        return FALSE;
+    }
 
+    ImplementsInterface简单转发了强制Inline版本
+
+    //实现类型等效接口
+    BOOL ImplementsEquivalentInterface(MethodTable *pInterface)
+    {
+        //首先检查具体情况，为成功Case优化
+        if (ImplementsInterfaceInline(pInterface))
+            return TRUE;
+        //接口无类型等效
+        if (!pInterface->HasTypeEquivalence())
+            return FALSE;
+        DWORD numInterfaces = GetNumInterfaces();
+        if (numInterfaces == 0)
+            return FALSE;
+        //遍历Map查找等效接口
+        InterfaceInfo_t *pInfo = GetInterfaceMap();
+        do
+        {
+            if (pInfo->GetMethodTable()->IsEquivalentTo(pInterface))
+                return TRUE;
+            pInfo++;
+        }
+        while (--numInterfaces);
+        return FALSE;
+    }
+
+    //获取Interface函数的MethodDescriptor
+    MethodDesc *GetMethodDescForInterfaceMethod(TypeHandle ownerType, MethodDesc *pInterfaceMD, BOOL throwOnConflict)
+    {
+        MethodDesc *pMD = NULL;
+        MethodTable *pInterfaceMT = ownerType.AsMethodTable();
+    #ifdef CROSSGEN_COMPILE
+        //CrossGen编译下使用DispatchSlot查找目标MethodDesc
+        DispatchSlot implSlot(FindDispatchSlot(pInterfaceMT->GetTypeID(), pInterfaceMD->GetSlot(), throwOnConflict));
+        if (implSlot.IsNull())
+        {
+            _ASSERTE(!throwOnConflict);
+            return NULL;
+        }
+        PCODE pTgt = implSlot.GetTarget(); 
+    #else
+        //否则使用VirtualCall
+        PCODE pTgt = VirtualCallStubManager::GetTarget(
+        pInterfaceMT->GetLoaderAllocator()->GetDispatchToken(pInterfaceMT->GetTypeID(), pInterfaceMD->GetSlot()),
+        this, throwOnConflict);
+        if (pTgt == NULL)
+        {
+            _ASSERTE(!throwOnConflict);
+            return NULL;
+        }
+    #endif
+        pMD = MethodTable::GetMethodDescForSlotAddress(pTgt);
+        //检查并恢复(可能是在本机映像中)
+        pMD->CheckRestore();
+        return pMD;
+    }
+
+而第二个重载版本仅能适用于非泛型接口函数，其做了简单转发，并直接从MethodTable构造TypeHandle(这就是为什么)
+
+    MethodDesc *GetMethodDescForInterfaceMethod(MethodDesc *pInterfaceMD, BOOL throwOnConflict);
+#### 接口图(Interface Map)
+    //获取接口图
+    inline PTR_InterfaceInfo GetInterfaceMap()
+    {
+        //直接读取指针
+        return ReadPointer(this, &MethodTable::m_pInterfaceMap);
+    }
 #### 嵌套类-InterfaceMapIterator
-
+此类被用于接口图的迭代，而不直接接触接口图，这样就可以轻松更改图的实现。
+这个类目前比较简单，仍然是C#风格迭代器，遍历数组。这里不再讲解。
 #### 附加Interface Map数据
+    //* 我们为了更好的数据密度(其实就是省空间)，选择在独立的，可选的位置储存
+    //  此MethodTable实现的Interfaces的额外信息(一些Flag)，如果我们直接把
+    //  他们放在Interface Map里，内存对齐会要求我们使用32位甚至64位来储存一个
+    //  bool值。目前我们储存的唯一Flag是IsDeclaredOnClass(这个接口是否被此类型
+    //  显式声明)
 
-#### Virtual/Interface调用解析
+    //目前来讲，当我们有Interface Map时，我们总是储存额外的信息
+    //你可以想象在未来这个被限制于那些至少有一个接口拥有一个Flag的非默认值
+    //的情况
+    inline BOOL HasExtraInterfaceInfo()
+    {
+        return HasInterfaceMap();
+    }
 
-#### 协议实现
+    //接口可以拥有其自己的额外信息并储存在可选数据结构里的数量
+    //一旦接口数量超过此值，可选数据Slot会被替换为指向Buffer的指针
+    //Buffer里储存有额外的信息
+    enum { kInlinedInterfaceInfoThreshhold = sizeof(TADDR) * 8 };
 
-#### 终结(Finalization)语义
+    //本函数计算接口需要多少bytes来储存其额外的信息
+    //当没有接口时，这个值是0，但在接口数量小的时候也可能是0
+    //调用者必须准备处理这个情况
+    static SIZE_T GetExtraInterfaceInfoSize(DWORD cInterfaces)
+    {
+        //对于小接口数量，我们可以将可选成员当作BitMap储存
+        if (cInterfaces <= kInlinedInterfaceInfoThreshhold)
+            return 0;
+        //否则我们会导致TADDR数组被分配
+        //使用TADDR是因为几乎所有堆上分配的空间需要按TADDR的方式对齐
+        return ALIGN_UP(cInterfaces, sizeof(TADDR) * 8) / 8;
+    }
 
-#### 静态字段
+    //此函数在GetExtraInterfaceInfoSize之后被调用设立附加的内存
+    //用于追踪额外的接口信息
+    void InitializeExtraInterfaceInfo(PVOID pInfo)
+    {
+        //检查内存是否在正确的情景下被分配
+        _ASSERTE(((pInfo == NULL) && (GetExtraInterfaceInfoSize(GetNumInterfaces()) == 0)) ||
+            ((pInfo != NULL) && (GetExtraInterfaceInfoSize(GetNumInterfaces()) != 0)));
+        //如果我们不要求额外的接口信息，此调用就是没有作用的(这种情况下
+        //buffer永远不应该被分配)
+        if (!HasExtraInterfaceInfo())
+        {
+            _ASSERTE(pInfo == NULL);
+            return;
+        }
+        //获取内联储存或者指向数据块的可选Slot
+        PTR_TADDR pInfoSlot = GetExtraInterfaceInfoPtr();
+        //无论是哪种情况，将pInfo写入总是正确的，在内联直接储存的情况下
+        //我们希望设置所有flag为0并且写入null就可以做到这一点。
+        //否则我们只是简单地想把buffer指针写入slot(这里不需要分辨位，我们总是
+        //可以通过接口数量来分辨使用了哪种格式)
+        *pInfoSlot = (TADDR)pInfo;
+    }
 
-#### 实例化静态信息
+下面又是熟悉的NGen环节
 
-#### 动态ID
+    //储存额外信息
+    void SaveExtraInterfaceInfo(DataImage *pImage)
+    {
+        //要么没有额外数据，要么是内联的
+        if (GetNumInterfaces() <= kInlinedInterfaceInfoThreshhold)
+            return;
+        //储存到本机映像
+        pImage->StoreStructure((LPVOID)*GetExtraInterfaceInfoPtr(),
+                           GetExtraInterfaceInfoSize(GetNumInterfaces()),
+                           DataImage::ITEM_INTERFACE_MAP);
+    }
 
-#### 泛型字典信息
+    //修复额外信息
+    void FixupExtraInterfaceInfo(DataImage *pImage)
+    {
+        if (GetNumInterfaces() <= kInlinedInterfaceInfoThreshhold)
+            return;
+        pImage->FixupPointerField(this, (BYTE*)GetExtraInterfaceInfoPtr() - (BYTE*)this);
+    }
 
-#### 对象
-
-#### 枚举，委托，ValueType，数组
-
-#### 底层元数据
-
-#### 远程函数信息
-
-#### 托管对象
-
-#### GUID信息
-
-#### 嵌套类-MethodData
-#### 嵌套类-MethodDataObject
-#### 嵌套类-MethodDataInterface
-#### 嵌套类-MethodDataInterfaceImpl
-#### 嵌套类-MethodIterator
-#### 嵌套类-IntroducedMethodIterator
-
-#### 实例字段
