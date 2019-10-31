@@ -162,6 +162,7 @@ Slot Map是按位来编码的，而且利用了经典接口使用Δ值来实现�
 这只是一个作为所有Stub失败的最终路径，其使用一个<token,type>的元组返回目标函数
 Generic Resolver也负责在需要时创建Dispatch和Resolve Stub，当更好的Stub可用
 时，为Indirection Cell替换Stub，缓存结果，还有其他的记录工作
+
 ##### Lookup Stub
 这些stub首先被分配到接口调度的地方，并且在JIT编译接口调用的地方被创建。因为JIT
 在第一次调用执行之前完全不知道满足token的类型，这个stub就将token和类型作为参数
@@ -181,12 +182,12 @@ Resolve Stub
 
 对每一个独一无二的<token,type>元组都生成一个Dispatch Stub，但会延迟创建，直到
 调用地点的LookUp Stub被调用时。
+
 ##### Resolve Stub
 多态调用地点经由Resolve Stub处理。这些Stub用<token,type>来解析全局缓存中的目标
 方法，这里token在JIT时就可以确定，而类型在调用时可以确定。如果全局缓存不包含匹配
 项，那么Stub的最终步骤就是调用Generic Resolver并且调转到返回的目标方法。因为
-Generic Resolver会插入<token,type,target>元组到缓存中，紧随其后使用<token,type
->进行调用会成功地在缓存中找到目标方法
+Generic Resolver会插入<token,type,target>元组到缓存中，紧随其后使用<token,type>进行调用会成功地在缓存中找到目标方法
 
 当Dispatch Stub失败频率足够高时(也就是先前认为是单态)，这个调用地点会被认为是
 多态的并且Resolve Stub会修补调用地点来直接指向Resolve Stub来避免由Dispatch
