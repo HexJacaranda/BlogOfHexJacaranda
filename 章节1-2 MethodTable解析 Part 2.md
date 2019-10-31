@@ -1626,3 +1626,59 @@ m_pParentMethodTable可能有两种形式，一种为直接的MethodTable，另�
         pImage->FixupPointerField(this, (BYTE*)GetExtraInterfaceInfoPtr() - (BYTE*)this);
     }
 
+    //标记通过特殊Index在指定Map中的Interface为在类上显式声明
+    //对于RCW动态添加的Interface不合法
+    void SetInterfaceDeclaredOnClass(DWORD index)
+    {
+        _ASSERTE(HasExtraInterfaceInfo());
+        _ASSERTE(index < GetNumInterfaces());
+        //获取可选信息Slot
+        PTR_TADDR pInfoSlot = GetExtraInterfaceInfoPtr();
+        //如果是内联储存，直接设置
+        if (GetNumInterfaces() <= kInlinedInterfaceInfoThreshhold)
+        {
+            *pInfoSlot |= SELECT_TADDR_BIT(index);
+        }
+        else
+        {
+            //获取Buffer
+            TADDR *pBitmap = (PTR_TADDR)*pInfoSlot;
+            //对应数组Index
+            DWORD idxTaddr = index / (sizeof(TADDR) * 8); 
+            //对应bitset内的Index
+            DWORD idxInTaddr = index % (sizeof(TADDR) * 8);
+            TADDR bitmask = SELECT_TADDR_BIT(idxInTaddr);
+            //设置比特位
+            pBitmap[idxTaddr] |= bitmask;
+            _ASSERTE((pBitmap[idxTaddr] & bitmask) == bitmask);
+        }
+    }
+
+    bool IsInterfaceDeclaredOnClass(DWORD index)
+    {
+        _ASSERTE(HasExtraInterfaceInfo());
+        //对于动态添加的Interface，其总不是显式声明的(这是规定)
+        if (index >= GetNumInterfaces())
+        {
+    #ifdef FEATURE_COMINTEROP
+            _ASSERTE(HasDynamicInterfaceMap());
+    #endif // FEATURE_COMINTEROP
+            return false;
+        }
+        //以下代码同上
+        TADDR taddrInfo = *GetExtraInterfaceInfoPtr();
+        if (GetNumInterfaces() <= kInlinedInterfaceInfoThreshhold)
+        {
+            return (taddrInfo & SELECT_TADDR_BIT(index)) != 0;
+        }
+        else
+        {
+            TADDR *pBitmap = (PTR_TADDR)taddrInfo;
+            DWORD idxTaddr = index / (sizeof(TADDR) * 8);
+            DWORD idxInTaddr = index % (sizeof(TADDR) * 8);
+            TADDR bitmask = SELECT_TADDR_BIT(idxInTaddr);
+            return (pBitmap[idxTaddr] & bitmask) != 0;
+        }
+    }
+
+    
