@@ -1,17 +1,13 @@
 ### Virtual/Interface调用解析
 ### VSD 机制介绍
-VSD全称为Virtual Stub Dispatching，其使用Stub来用于虚函数的调用而不是使用传统的
-虚函数表。在过去，接口的调度要求接口拥有相对于进程独一无二(process unique)的标识
-符，并且每一个装载的接口都要被添加到全局的接口虚函数表Map中。这个要求意味着，所有的接口及其所有实现接口的类型于NGen情况下在运行时必须进行恢复，导致显著的启动工作集增大。使用Stub调度的动机是为了消除很大一部分的相关工作集，同时也将剩余的工作分布到进程的整个生命周期中。
+VSD全称为Virtual Stub Dispatching，其使用Stub来用于虚函数的调用而不是使用传统的虚函数表。在过去，接口的调度要求接口拥有相对于进程独一无二(process unique)的标识符，并且每一个装载的接口都要被添加到全局的接口虚函数表Map中。这个要求意味着，所有的接口及其所有实现接口的类型于NGen情况下在运行时必须进行恢复，导致显著的启动工作集增大。使用Stub调度的动机是为了消除很大一部分的相关工作集，同时也将剩余的工作分布到进程的整个生命周期中。
 
 尽管使用VSD来调度接口和虚函数调用是可以的，但目前仅仅被用于接口调度
 ### VSD依赖
 #### 组件依赖
-目前VSD代码相对于Runtime独立。其提供API供依赖组件使用，并且下方列出的依赖
-保证只涉及一块相对小的方面
+目前VSD代码相对于Runtime独立。其提供API供依赖组件使用，并且下方列出的依赖保证只涉及一块相对小的方面
 ##### 代码管理器
-VSD依赖于代码管理器来提供方法的状态信息，确切的说，是任意方法是否转移到了其
-最终的状态以便于VSD可以根据细节决定Stub的生成与目标的缓存(指解析后的缓存)
+VSD依赖于代码管理器来提供方法的状态信息，确切的说，是任意方法是否转移到了其最终的状态以便于VSD可以根据细节决定Stub的生成与目标的缓存(指解析后的缓存)
 ##### 类型与方法
 MethodTable持有调度Map的指针，其用于决定给定VSD调用的目标函数地址
 ##### 特殊类型
@@ -20,22 +16,14 @@ MethodTable持有调度Map的指针，其用于决定给定VSD调用的目标函
 ##### 代码管理器
 代码管理器依赖于VSD为JIT编译器提供接口调用的目标函数
 ##### 类构建器(Class Builder)
-类构建器使用调度Map所暴露的API在类型构建时创建那些会被VSD代码在调度类型上
-使用的调度Map
+类构建器使用调度Map所暴露的API在类型构建时创建那些会被VSD代码在调度类型上使用的调度Map
 
 ### 设计目标与副作用
 #### 目的
 ##### 工作集精简
-接口调度先前的实现是使用一个很大的,甚至有点稀疏的Virtual Table查找来应对
-贯穿进程的接口标识符。此目标是为了通过按需产生调度Stub来减少
-冷工作集(使用频率较低)的数据量，在理论上保持相关的调用以及他们的调度Stub
-在一起并且增加工作集的数据紧凑度
+接口调度先前的实现是使用一个很大的,甚至有点稀疏的Virtual Table查找来应对贯穿进程的接口标识符。此目标是为了通过按需产生调度Stub来减少工作集(使用频率较低)的数据量，在理论上保持相关的调用以及他们的调度Stub在一起并且增加工作集的数据紧凑度
 
-需要注意且很重要的是，参与VSD的初始化工作集因为需要使用数据结构来在
-在系统运行时跟踪不同需要构建和回收的Stub而实际上对于每个调用的地方是
-多于一个的(工作集)；然而，当应用程序到达稳定状态时，这些数据结构将不再
-被简单的调度所需要，因此会得到回收。不幸的是，对于客户端程序来讲，这也就
-等于更慢的启动，这也是导致对虚函数禁用VSD的原因之一
+需要注意且很重要的是，参与VSD的初始化工作集因为需要使用数据结构来在在系统运行时跟踪不同需要构建和回收的Stub而实际上对于每个调用的地方是多于一个的(工作集)；然而，当应用程序到达稳定状态时，这些数据结构将不再被简单的调度所需要，因此会得到回收。不幸的是，对于客户端程序来讲，这也就等于更慢的启动，这也是导致对虚函数禁用VSD的原因之一
 
 ##### 吞吐量的等价
 保持接口和虚函数的调度与先前的Virtual Table调度机制在一个可平摊的吞吐量等价下是
@@ -47,42 +35,25 @@ MethodTable持有调度Map的指针，其用于决定给定VSD调用的目标函
 ### Token的表示与调度Map的设计
 调度Token是一个在运行时分配的本机字长大小的值，内部由一个表示接口和Slot的元组表示
 
-此设计使用了分配的类型标识符值与Slot值结合。为了利用与Runtime的整合，实现也像传统
-Virtual Table分布那样来分配Slot索引。这意味着Runtime仍然可以一样地应对
-MethodTable，MethodDescriptor与Slot索引，除了Virtual Table必须使用帮助函数
-而不是直接访问来处理此抽象。
+此设计使用了分配的类型标识符值与Slot值结合。为了利用与Runtime的整合，实现也像传统Virtual Table分布那样来分配Slot索引。这意味着Runtime仍然可以一样地应对MethodTable，MethodDescriptor与Slot索引，除了Virtual Table必须使用帮助函数而不是直接访问来处理此抽象。
 
-词Slot总是用于经典的Virtual Table被创建且被映射机制翻译的Slot索引值的情况
-也就是说，如果你要描述经典的虚函数Slot在MethodTable中的排布，Slot就意味着
-这是一个索引。理解这个差异是非常重要的，因为在Runtime代码中，Slot表示经典
-Virtual Table结构里的索引值和在Virtual Table里指针的地址。现有的变化是，Slot
-仅仅是一个索引值，代码指针的地址被包含在实现表中。
+词Slot总是用于经典的Virtual Table被创建且被映射机制翻译的Slot索引值的情况也就是说，如果你要描述经典的虚函数Slot在MethodTable中的排布，Slot就意味着这是一个索引。理解这个差异是非常重要的，因为在Runtime代码中，Slot表示经典Virtual Table结构里的索引值和在Virtual Table里指针的地址。现有的变化是，Slot仅仅是一个索引值，代码指针的地址被包含在实现表中。
 
 ### MethodTable
 #### 实现表
-实现表是一个数组，其中每一个方法都是被类型所引入的，拥有指向方法入口点的指针，其
-成员按照如下顺序排布：
+实现表是一个数组，其中每一个方法都是被类型所引入的，拥有指向方法入口点的指针，其成员按照如下顺序排布：
 
         * 引入(新Slot)的虚函数
         * 引入的非虚函数(实例函数和静态函数)
         * 重写的虚函数
 
-使用此格式的原因是，其为传统V-Table的排布提供了一种自然的扩展。因此许多在SlotMap
-的入口能被此顺序和其他细节，比如总的虚和非虚方法数量所推断出来。
+使用此格式的原因是，其为传统V-Table的排布提供了一种自然的扩展。因此许多在SlotMap的入口能被此顺序和其他细节，比如总的虚和非虚方法数量所推断出来。
 
 在当前Stub调度对虚方法禁用时，实现表实际上是不存在的，且被真正的V-Table所替代
  ，所有的映射结果都被表示成V-Table的Slot而非实现表的。
 
 #### Slot Map
-Slot Map是一个拥有多个形如<type,[<slot,scope,(index|slot)>]>>入口的表，其中
-类型使用了上面提到的动态分配的标识数来表示，其要么是表示当前类的守卫(sentinel)值
-(调用虚实例函数)，要么是被当前类型实现的接口标识符(或者是被其父类隐式地实现)
-子Slot Map，也就是被方括号所包围起来的，有一个或多个入口。其中第一个元素总是表示
-类型内的Slot，第二个元素Scope指定第三个元素是否为一个实现表的索引或是一个Slot索引
-Scope能够成为指示下一个元素用途的守卫值，其一就是下一个数字是否被解释为一个虚函数
-Slot并且应当被解析成虚函数调用this.slot。其二就是Scope也能标识在当前类型继承链上的
-特定类型。在这种情况下，第三个参数就是一个位于Scope所指示的类型的实现表的索引，并且
-这是一个type.slot最终的方法实现。
+Slot Map是一个拥有多个形如<type,[<slot,scope,(index|slot)>]>>入口的表，其中类型使用了上面提到的动态分配的标识数来表示，其要么是表示当前类的守卫(sentinel)值(调用虚实例函数)，要么是被当前类型实现的接口标识符(或者是被其父类隐式地实现)子Slot Map，也就是被方括号所包围起来的，有一个或多个入口。其中第一个元素总是表示类型内的Slot，第二个元素Scope指定第三个元素是否为一个实现表的索引或是一个Slot索引Scope能够成为指示下一个元素用途的守卫值，其一就是下一个数字是否被解释为一个虚函数Slot并且应当被解析成虚函数调用this.slot。其二就是Scope也能标识在当前类型继承链上的特定类型。在这种情况下，第三个参数就是一个位于Scope所指示的类型的实现表的索引，并且这是一个type.slot最终的方法实现。
 
 例子如下
 
@@ -111,89 +82,46 @@ Slot并且应当被解析成虚函数调用this.slot。其二就是Scope也能�
     [A.Bar 代码入口]                            [4,scope B,1]
     [B.Baz 代码入口]
 
-因此，看到如上的代码，Sub Map的第一列对应到经典的Virtual Table的索引(为了
-方便起见，我们省略掉了System.Object自带的4个函数)。寻找方法实现的顺序总是
-自下而上。因此如果我们拥有一个B类型的对象，想要调用I.Foo方法，我们会从B的
-Slot Map中查找，发现没有以接口I的ID作为Key的，因此沿着继承链向上走，来到A
-的Slot Map，发现就在那里。其表示Foo的第一个Slot(值为0)，是被B中虚函数表索引
-为4的Slot所实现。接着返回到B的Slot Map并且查找Slot 4的实现，并且找到其位于
-实现表中的Slot 1。
+因此，看到如上的代码，Sub Map的第一列对应到经典的Virtual Table的索引(为了方便起见，我们省略掉了System.Object自带的4个函数)。寻找方法实现的顺序总是
+自下而上。因此如果我们拥有一个B类型的对象，想要调用I.Foo方法，我们会从B的Slot Map中查找，发现没有以接口I的ID作为Key的，因此沿着继承链向上走，来到A的Slot Map，发现就在那里。其表示Foo的第一个Slot(值为0)，是被B中虚函数表索引为4的Slot所实现。接着返回到B的Slot Map并且查找Slot 4的实现，并且找到其位于实现表中的Slot 1。
 
 #### 附加用途
-很重要的一点是，此映射方法能够被用于实现虚方法Slot实现的重映射。因为Map的Scope
-能力，非虚函数也可以被引用。当Runtime想要支持用非虚函数实现接口时或许会非常有用。
+很重要的一点是，此映射方法能够被用于实现虚方法Slot实现的重映射。因为Map的Scope能力，非虚函数也可以被引用。当Runtime想要支持用非虚函数实现接口时或许会非常有用。
 
 #### 优化
-Slot Map是按位来编码的，而且利用了经典接口使用Δ值来实现的优势，大大地减少了Map
-的大小。除此之外，新的Slot(无论虚或者非虚)都可以通过在实现表中的顺序被推测出来。
-如果表中含有新的虚函数Slot，其后跟随着非虚实例函数的Slot，其后又是重写函数，那么
-恰当的Slot Map 入口就可以通过其索引和各类Slot的数量被推测出来。所有这样可以被推测
-出来的入口都使用(*)号在上图被标注出来。
-现行的数据结构排布使用以下的方案，这里Dispatch Map仅当映射不能被使用顺序推断出来
-时才存在。
+Slot Map是按位来编码的，而且利用了经典接口使用Δ值来实现的优势，大大地减少了Map的大小。除此之外，新的Slot(无论虚或者非虚)都可以通过在实现表中的顺序被推测出来。如果表中含有新的虚函数Slot，其后跟随着非虚实例函数的Slot，其后又是重写函数，那么恰当的Slot Map 入口就可以通过其索引和各类Slot的数量被推测出来。所有这样可以被推测出来的入口都使用(*)号在上图被标注出来。现行的数据结构排布使用以下的方案，这里Dispatch Map仅当映射不能被使用顺序推断出来时才存在。
 
  MethodTable -> [DispatchMap ->] ImplementationTable
 
 ### 类型ID Map
-此Map将类型映射到ID上，ID是单调增加的。目前来说，所有这样的类型都是接口。
-并且目前使用HashMap来实现，并且包含入口用于双向查找。
+此Map将类型映射到ID上，ID是单调增加的。目前来说，所有这样的类型都是接口。并且目前使用HashMap来实现，并且包含入口用于双向查找。
 
 ### 调度Token
-调度Token都是<typeID,slot>这样的元组。对于接口，类型会是分配的接口ID
-对于虚方法，此值将会是一个表示此Slot会被类型内部所决议的目标函数Slot
-此值对在绝大情况下都和平台的本机字长一致，在x86上，有可能是每个值的低
-16位所连接起来的。这种情况能被泛化到处理溢出问题，就好像一个TypeHandle
-在运行时要么是MethodTable指针，要么是一个<TypeHandle,TypeHandle>对
-，使用守卫位来区分这两种情况。现在还没有决定这样做是否为必要的。
+调度Token都是<typeID,slot>这样的元组。对于接口，类型会是分配的接口ID对于虚方法，此值将会是一个表示此Slot会被类型内部所决议的目标函数Slot此值对在绝大情况下都和平台的本机字长一致，在x86上，有可能是每个值的低16位所连接起来的。这种情况能被泛化到处理溢出问题，就好像一个TypeHandle在运行时要么是MethodTable指针，要么是一个<TypeHandle,TypeHandle>对，使用守卫位来区分这两种情况。现在还没有决定这样做是否为必要的。
 ### VSD设计
 #### 从调度Token到方法实现解析
-给定一个Token和类型，方法的实现是通过映射Token到对应类型实现表的索引来查找。
-实现表必须从类型的MethodTable可达。此Map是被BuildMethodTable所创建，其遍历
-所有被此类型实现的接口来为类型构建MethodTable和决定每一个由此类型实现或者重写
-的接口方法。通过跟踪这些信息，在接口调度时期给定Token和对象来决定目标方法是可能
-的(对象中可获取MethodTable和Token映射)
+给定一个Token和类型，方法的实现是通过映射Token到对应类型实现表的索引来查找。实现表必须从类型的MethodTable可达。此Map是被BuildMethodTable所创建，其遍历所有被此类型实现的接口来为类型构建MethodTable和决定每一个由此类型实现或者重写的接口方法。通过跟踪这些信息，在接口调度时期给定Token和对象来决定目标方法是可能的(对象中可获取MethodTable和Token映射)
 
 #### Stub
-接口调度调用通过Stub进行，这些Stub都是按需生成的，并且都有一个终极目标:匹配token
-和object到一个具体的方法实现，并且转发调用到那个方法实现。
-目前只有三种类型的Stub，他们分别是LookUp Stub，Dispatch Stub，Resolve Stub
+接口调度调用通过Stub进行，这些Stub都是按需生成的，并且都有一个终极目标:匹配token和object到一个具体的方法实现，并且转发调用到那个方法实现。目前只有三种类型的Stub，他们分别是LookUp Stub，Dispatch Stub，Resolve Stub
 
 ##### Generic Resolver
-这只是一个作为所有Stub失败的最终路径，其使用一个<token,type>的元组返回目标函数
-Generic Resolver也负责在需要时创建Dispatch和Resolve Stub，当更好的Stub可用
-时，为Indirection Cell替换Stub，缓存结果，还有其他的记录工作
+这只是一个作为所有Stub失败的最终路径，其使用一个<token,type>的元组返回目标函数Generic Resolver也负责在需要时创建Dispatch和Resolve Stub，当更好的Stub可用时，为Indirection Cell替换Stub，缓存结果，还有其他的记录工作
 
 ##### Lookup Stub
-这些stub首先被分配到接口调度的地方，并且在JIT编译接口调用的地方被创建。因为JIT
-在第一次调用执行之前完全不知道满足token的类型，这个stub就将token和类型作为参数
-传递给 Generic Resolver。如果有必要，Generic Resolver会创建Dispatch Stub和
-Resolve Stub，之后将调用地点进行打补丁，更新成Dispatch Stub因此Lookup Stub
-不会再被使用。
+这些stub首先被分配到接口调度的地方，并且在JIT编译接口调用的地方被创建。因为JIT在第一次调用执行之前完全不知道满足token的类型，这个stub就将token和类型作为参数传递给 Generic Resolver。如果有必要，Generic Resolver会创建Dispatch Stub和Resolve Stub，之后将调用地点进行打补丁，更新成Dispatch Stub因此Lookup Stub不会再被使用。
 
-对每一个独一无二的token都会创建一个Lookup Stub(比如，对同一个接口Slot调用的
-调用地点会使用同一个Lookup Stub)
+对每一个独一无二的token都会创建一个Lookup Stub(比如，对同一个接口Slot调用的调用地点会使用同一个Lookup Stub)
 
 ##### Dispatch Stub
-这些Stub被用于认为行为上单态的调用地点，也就是用于某个调用地点的对象实际上都是
-一个类型，Dispatch Stub使用被调用的对象MethodTable并且与被缓存的类型比较，
-如果成功，就跳转到缓存的方法。在x86上这会导致一个"比较，条件失败跳转，跳转到目标"
-指令序列并且为任意Stub提供最佳的性能。如果Stub类型比较失败了，这就会跳转到对应的
-Resolve Stub
+这些Stub被用于认为行为上单态的调用地点，也就是用于某个调用地点的对象实际上都是一个类型，Dispatch Stub使用被调用的对象MethodTable并且与被缓存的类型比较，如果成功，就跳转到缓存的方法。在x86上这会导致一个"比较，条件失败跳转，跳转到目标"指令序列并且为任意Stub提供最佳的性能。如果Stub类型比较失败了，这就会跳转到对应的Resolve Stub
 
-对每一个独一无二的<token,type>元组都生成一个Dispatch Stub，但会延迟创建，直到
-调用地点的LookUp Stub被调用时。
+对每一个独一无二的<token,type>元组都生成一个Dispatch Stub，但会延迟创建，直到调用地点的LookUp Stub被调用时。
 
 ##### Resolve Stub
-多态调用地点经由Resolve Stub处理。这些Stub用<token,type>来解析全局缓存中的目标
-方法，这里token在JIT时就可以确定，而类型在调用时可以确定。如果全局缓存不包含匹配
-项，那么Stub的最终步骤就是调用Generic Resolver并且调转到返回的目标方法。因为
-Generic Resolver会插入<token,type,target>元组到缓存中，紧随其后使用<token,type>进行调用会成功地在缓存中找到目标方法
+多态调用地点经由Resolve Stub处理。这些Stub用<token,type>来解析全局缓存中的目标方法，这里token在JIT时就可以确定，而类型在调用时可以确定。如果全局缓存不包含匹配项，那么Stub的最终步骤就是调用Generic Resolver并且调转到返回的目标方法。因为Generic Resolver会插入<token,type,target>元组到缓存中，紧随其后使用<token,type>进行调用会成功地在缓存中找到目标方法
 
-当Dispatch Stub失败频率足够高时(也就是先前认为是单态)，这个调用地点会被认为是
-多态的并且Resolve Stub会修补调用地点来直接指向Resolve Stub来避免由Dispatch
-Stub 持续失败所造成的开销。在同步点(目前来说是一次GC的结尾)，多态调用地点会被随机
-提升回单态调用地点，这是基于一个调用地点的多态特性通常是暂时的假设。如果对任意调用
-地点的假设是错误的，那么它就会快速触发Backpatch将其再次降级为多态
+当Dispatch Stub失败频率足够高时(也就是先前认为是单态)，这个调用地点会被认为是多态的并且Resolve Stub会修补调用地点来直接指向Resolve Stub来避免由DispatchStub 持续失败所造成的开销。在同步点(目前来说是一次GC的结尾)，多态调用地点会被随机提升回单态调用地点，这是基于一个调用地点的多态特性通常是暂时的假设。如果对任意调用地点的假设是错误的，那么它就会快速触发Backpatch将其再次降级为多态
 
 对于每一个Token都会创建一个Resolve Stub，但是他们都使用全局缓存。每一个Token对
 一个Stub允许快速，高效的哈希算法，其使用从<token,type>元组中不变的部分所派生
@@ -214,15 +142,9 @@ Stub 持续失败所造成的开销。在同步点(目前来说是一次GC的结
     call    [addr]             jne      failure
                                jmp      target    ------------>目标方法:
 
-这里expectedMT，failure标签地址，target是被编码进Stub的常量。
-典型的Stub序列有与前面接口调度机制有相同数量的指令，并且更少的内存间接寻址可以
-允许其在更小的工作集大小贡献下跑的更快。这也会导致JIT生成更少的代码，因为一部分
-工作是在Stub中进行，而不是在调用地点进行。这仅仅在调用地点很少被访问时有优势。
-需要注意的是，失败分支被安排在此以便于x86分支预测会跟随成功的情况。
+这里expectedMT，failure标签地址，target是被编码进Stub的常量。典型的Stub序列有与前面接口调度机制有相同数量的指令，并且更少的内存间接寻址可以允许其在更小的工作集大小贡献下跑的更快。这也会导致JIT生成更少的代码，因为一部分工作是在Stub中进行，而不是在调用地点进行。这仅仅在调用地点很少被访问时有优势。需要注意的是，失败分支被安排在此以便于x86分支预测会跟随成功的情况。
 ### 目前状况
-目前来说，VSD仅被用于接口方法调用而没有虚方法调用，原因参见上方介绍。对虚方法禁用
-VSD的结果就是，每一个类型为自己的虚方法都有VTable并且在上面描述的实现表是被禁用的。
-Dispatch Map仍然在担任接口方法调度的任务。
+目前来说，VSD仅被用于接口方法调用而没有虚方法调用，原因参见上方介绍。对虚方法禁用VSD的结果就是，每一个类型为自己的虚方法都有VTable并且在上面描述的实现表是被禁用的。Dispatch Map仍然在担任接口方法调度的任务。
 
 #### 代码解析续
 
@@ -474,9 +396,762 @@ COM交互
     }
 
 #### 协议实现
+    //是否有调度Map
+    inline BOOL HasDispatchMap()
+    {
+        return GetDispatchMap() != NULL;
+    }
 
+    PTR_DispatchMap GetDispatchMap()
+    {
+        MethodTable * pMT = this;
+        if (!pMT->HasDispatchMapSlot())
+        {
+            //如果没有调度Map Slot，检查代表性MethodTable
+            pMT = pMT->GetCanonicalMethodTable();
+            if (!pMT->HasDispatchMapSlot())
+                return NULL;
+        }
+        g_IBCLogger.LogDispatchMapAccess(pMT);
+        //获取Slot起始地址
+        TADDR pSlot = pMT->GetMultipurposeSlotPtr(enum_flag_HasDispatchMapSlot, c_DispatchMapSlotOffsets);
+        return RelativePointer<PTR_DispatchMap>::GetValueAtPtr(pSlot);     
+    }
 
+    inline BOOL HasDispatchMapSlot()
+    {
+        return GetFlag(enum_flag_HasDispatchMapSlot);
+    }
 
+    void SetDispatchMap(DispatchMap *pDispatchMap)
+    {
+        //存在的情况下进行设置
+        _ASSERTE(HasDispatchMapSlot());
+        TADDR pSlot = GetMultipurposeSlotPtr(enum_flag_HasDispatchMapSlot, c_DispatchMapSlotOffsets);
+        RelativePointer<DispatchMap *> *pRelPtr = (RelativePointer<DispatchMap *> *)pSlot;
+        pRelPtr->SetValue(pDispatchMap);
+    }
+
+     BOOL FindEncodedMapDispatchEntry(UINT32 typeID,
+                                     UINT32 slotNumber,
+                                     DispatchMapEntry *pEntry)
+    {
+        //LookupDispatchMapType可能会抛出异常
+        //但在当下，延迟接口恢复是被禁用的，因此应当永远不抛出
+        CONSISTENCY_CHECK(HasDispatchMap());
+        //获得调度Token所对应的类型
+        MethodTable * dispatchTokenType = GetThread()->GetDomain()->LookupType(typeID);
+        //寻找确切的类型匹配
+        {
+            //遍历调度Map
+            DispatchMap::EncodedMapIterator it(this);
+            for (; it.IsValid(); it.Next())
+            {
+                DispatchMapEntry * pCurEntry = it.Entry();
+                //Slot索引能够对应(先根据索引过滤掉不可能项)
+                if (pCurEntry->GetSlotNumber() == slotNumber)
+                {
+                    //获取Entry所对应类型
+                    MethodTable * pCurEntryType = LookupDispatchMapType(pCurEntry->GetTypeID());
+                    if (pCurEntryType == dispatchTokenType)
+                    {
+                        //比较成功，拷贝对应Entry，返回
+                        *pEntry = *pCurEntry;
+                        return TRUE;
+                    }
+                }
+            }
+        }
+        //如果没有找到确切的匹配，且涉及了协变/逆变，重复这个过程，直到
+        //能够匹配上一个CanCastTo
+        //我们把上下分开的理由是我们想尽可能避免检查类型是否有协变/逆变
+        //注意:对于有协变逆变参与的接口，CER是不被保证的。
+        if (dispatchTokenType->HasVariance() || dispatchTokenType->HasTypeEquivalence())
+        {
+            DispatchMap::EncodedMapIterator it(this);
+            for (; it.IsValid(); it.Next())
+            {
+                DispatchMapEntry * pCurEntry = it.Entry();
+                if (pCurEntry->GetSlotNumber() == slotNumber)
+                {
+                    //仍然是先过滤Slot索引
+        #ifndef DACCESS_COMPILE
+                    MethodTable * pCurEntryType = LookupDispatchMapType(pCurEntry->GetTypeID());
+                    //比较协变逆变接口或者委托
+                    if (dispatchTokenType->HasVariance() && 
+                    pCurEntryType->CanCastByVarianceToInterfaceOrDelegate(dispatchTokenType, NULL))
+                    {
+                        *pEntry = *pCurEntry;
+                        return TRUE;
+                    }
+                    //如果有实例化并且有类型等效的参与
+                    if (dispatchTokenType->HasInstantiation() && dispatchTokenType->HasTypeEquivalence())
+                    {
+                        //检查类型等效
+                        if (dispatchTokenType->IsEquivalentTo(pCurEntryType))
+                        {
+                            *pEntry = *pCurEntry;
+                            return TRUE;
+                        }
+                    }
+        #endif
+                }
+        #if !defined(DACCESS_COMPILE) && defined(FEATURE_TYPEEQUIVALENCE)
+                if (this->HasTypeEquivalence() && //类型等效
+                    !dispatchTokenType->HasInstantiation() &&//无实例化 
+                    dispatchTokenType->HasTypeEquivalence() && //类型等效
+                    dispatchTokenType->GetClass()->IsEquivalentType())//等效类型
+                {
+                    //必为接口
+                    _ASSERTE(dispatchTokenType->IsInterface());
+                    MethodTable * pCurEntryType = LookupDispatchMapType(pCurEntry->GetTypeID());
+                    //检查等效
+                    if (pCurEntryType->IsEquivalentTo(dispatchTokenType))
+                    {
+                        //找出目标MethodDescriptor
+                         MethodDesc * pMD = dispatchTokenType->GetMethodDescForSlot(slotNumber);
+                         //是否放得下
+                         _ASSERTE(FitsIn<WORD>(slotNumber));
+                        BOOL fNewSlotFound = FALSE;
+                        //获取等效的方法Slot
+                        DWORD newSlot = GetEquivalentMethodSlot(
+                        dispatchTokenType, 
+                        pCurEntryType, 
+                        static_cast<WORD>(slotNumber), 
+                        &fNewSlotFound);
+                        if (fNewSlotFound && (newSlot == pCurEntry->GetSlotNumber()))
+                        {
+                            //如果找到了，且Slot相等
+                            MethodDesc * pNewMD = pCurEntryType->GetMethodDescForSlot(newSlot);
+                            //检查MethodDescriptor的签名
+                            MetaSig msig(pMD);
+                            MetaSig msignew(pNewMD);
+                            if (MetaSig::CompareMethodSigs(msig, msignew, FALSE))
+                            {
+                                *pEntry = *pCurEntry;
+                                return TRUE;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    BOOL FindIntroducedImplementationTableDispatchEntry(UINT32 slotNumber,
+                                                        DispatchMapEntry *pEntry,
+                                                        BOOL fVirtualMethodsOnly);
+
+上面这个方法目前还没有实现，不过可以看得出，实现表的调度在未来将会替代当前分割的调度方式。                    
+
+    BOOL FindDispatchEntryForCurrentType(UINT32 typeID, 
+                                         UINT32 slotNumber,
+                                         DispatchMapEntry *pEntry)
+    {
+        BOOL fRes = FALSE;
+        if (HasDispatchMap())
+        {
+            fRes = FindEncodedMapDispatchEntry(
+            typeID, slotNumber, pEntry);
+        }
+        return fRes;
+    }
+
+需要特别提出的是，这里的对当前类型是通过协议的前置条件保证的。
+
+    PRECONDITION(typeID != TYPE_ID_THIS_CLASS);
+
+    BOOL FindDispatchEntry(UINT32 typeID,
+                           UINT32 slotNumber,
+                           DispatchMapEntry *pEntry)
+    {
+        //从派生链的最底部，当前类型开始查找合适的Entry，
+        //这与之前的VSD描述是一致的
+        MethodTable *pCurMT = this;
+        UINT32 iCurInheritanceChainDelta = 0;
+        while (pCurMT != NULL)
+        {
+            g_IBCLogger.LogMethodTableAccess(pCurMT);
+            if (pCurMT->FindDispatchEntryForCurrentType(
+                typeID, slotNumber, pEntry))
+            {
+                RETURN (TRUE);
+            }
+            pCurMT = pCurMT->GetParentMethodTable();
+            iCurInheritanceChainDelta++;
+        }
+        RETURN (FALSE);
+    }
+
+查找调度实现
+
+    //只有一些这样的可能情况
+    //      1. 指明接口的协议
+    //          a. 对于非虚函数实现，把调度Slot当作实现返回
+    //          b. 在'this'上映射到虚方法Slot，需要进一步解析新的虚方法Slot
+    //      2. 'this'协议
+    //          a. 同上
+    //          b. 在'this'上映射到另一个虚方法Slot，需要进一步解析this的新Slot
+    BOOL FindDispatchImpl(
+        UINT32         typeID, 
+        UINT32         slotNumber, 
+        DispatchSlot * pImplSlot,
+        BOOL           throwOnConflict)
+    {
+        LOG((LF_LOADER, LL_INFO10000, "SD: MT::FindDispatchImpl: searching %s.\n", GetClass()->GetDebugClassName()));
+        //接口协议
+        DispatchMapEntry declEntry;
+        DispatchMapEntry implEntry;
+        if (typeID != TYPE_ID_THIS_CLASS)
+        {
+            DispatchMapEntry e;
+            if (!FindDispatchEntry(typeID, slotNumber, &e))
+            {
+                //找出被调用的目标接口
+                MethodTable *pIfcMT = GetThread()->GetDomain()->LookupType(typeID);
+                //找出被调用的接口函数
+                MethodDesc * pIfcMD = pIfcMT->GetMethodDescForSlot(slotNumber);
+                //通过IList<T>(或者IEnumerable<T>或者ICollection<T>)调用Array方法
+                //必须被特殊处理，这些接口使用了魔法(主要是考虑到工作集的问题，这些
+                //接口都是在内部按需生成，即使语义上像静态的接口）
+                //注意：目前泛型数组接口不支持CER
+                if (IsArray())
+                {
+                    //在这里，我们知道我们正在尝试将一个数组转换到常规静态查找会失败
+                    //的接口上
+                    //此函数假定转换是合法的，因此我们现在可以假定这是一个通过IList<T>
+                    //对Array方法的调用
+                    //获取IList<T>或者IReadOnlyList<T>的MethodTable
+                    //快速检查纯净性
+                    if (!(pIfcMT->HasInstantiation()))
+                    {
+                        _ASSERTE(!"Should not have gotten here. If you did, it's probably because multiple interface instantiation hasn't been checked in yet. This code only works on top of that.");
+                        RETURN(FALSE);
+                    }
+                    //获取泛型类型(像IList<T>中的T一样)
+                    TypeHandle theT = pIfcMT->GetInstantiation()[0];
+                    //获取SZArrayHelper的对应方法。这才是真正要执行的方法
+                    //此方法会变为一个泛型方法的实例化。如果一个调用者要求
+                    //调用IList<T>.Meth()，实际上会被引导至SZArrayHelper.Meth<T>()
+                    MethodDesc * pActualImplementor = GetActualImplementationForArrayGenericIListOrIReadOnlyListMethod(pIfcMD, theT);
+                    //现在构造一个调度Slot
+                    DispatchSlot ds(pActualImplementor->GetMethodEntryPoint());
+                    if (pImplSlot != NULL)
+                    {
+                        *pImplSlot = ds;
+                    }
+                    RETURN(TRUE);
+                }
+                else
+                {
+                    //试一试我们能否从实现的接口之一找到默认函数
+                    MethodDesc *pDefaultMethod = NULL;
+                    //尝试精确匹配
+                    BOOL foundDefaultInterfaceImplementation  = FindDefaultInterfaceImplementation(
+                        pIfcMD,//解析的MethodDescriptor
+                        pIfcMT,//解析的接口类型
+                        &pDefaultMethod,
+                        FALSE, //不允许协变逆变
+                        throwOnConflict);
+                    //如果没有精确的匹配，尝试协变逆变匹配
+                    if (!foundDefaultInterfaceImplementation && pIfcMT->HasVariance())
+                    {
+                        foundDefaultInterfaceImplementation = FindDefaultInterfaceImplementation(
+                            pIfcMD,
+                            pIfcMT,
+                            &pDefaultMethod,
+                            TRUE, //允许协变逆变
+                            throwOnConflict);
+                    }
+                    if (foundDefaultInterfaceImplementation)
+                    {
+                        //如果默认的实现是抽象的，我们就遇上了重抽象
+                        //例子：
+                        //interface IFoo { void Frob(){...} } 
+                        //interface IBar : IFoo { abstract void IFoo.Frob() }
+                        //class Foo : IBar { //IFoo.Frob在这里没有实现 }
+                        if (pDefaultMethod->IsAbstract())
+                        {
+                              if (throwOnConflict)
+                              {
+                                    //抛出
+                                    ThrowExceptionForAbstractOverride(this, pIfcMT, pIfcMD);
+                              }
+                        }
+                        else
+                        {
+                            //为默认实现构造Slot
+                            DispatchSlot ds(pDefaultMethod->GetMethodEntryPoint());
+                            if (pImplSlot != NULL)
+                            {
+                                *pImplSlot = ds;
+                            }
+                            RETURN(TRUE);
+                        }
+                    }
+                }
+                //否则此协议未被此类型或者其余父类所实现
+                RETURN(FALSE);
+            }
+            //更新类型ID和Slot数以便于下方的全盘搜索可以进行
+            typeID = TYPE_ID_THIS_CLASS;
+            slotNumber = e.GetTargetSlotNumber();
+        }
+        //'this'协议，直接从VirtualTable中取出Slot
+        *pImplSlot = GetRestoredSlot(slotNumber);
+        RETURN (TRUE);
+    }
+
+对接口调度找到接口方法的默认实现或者找到最深重写的方法进行调用
+
+    BOOL FindDefaultInterfaceImplementation(
+        MethodDesc *pInterfaceMD,
+        MethodTable *pObjectMT,
+        MethodDesc **ppDefaultMethod,
+        BOOL allowVariance,
+        BOOL throwOnConflict)
+    {
+    #ifdef FEATURE_DEFAULT_INTERFACES
+        InterfaceMapIterator it = this->IterateInterfaceMap();
+        CQuickArray<MatchCandidate> candidates;
+        unsigned candidatesCount = 0;
+        candidates.AllocThrows(this->GetNumInterfaces());
+        //从派生类到父类遍历接口
+        //我们使用一种最简单的实现，因为在大多数情况下接口数量都很小
+        //且接口调度的结果早已被缓存。如果有在非常复杂的接口继承体系
+        //下调用默认的接口方法，我们就会再次访问
+        MethodTable *pMT = this;
+        while (pMT != NULL)
+        {
+            MethodTable *pParentMT = pMT->GetParentMethodTable();
+            unsigned dwParentInterfaces = 0;
+            if (pParentMT)
+                dwParentInterfaces = pParentMT->GetNumInterfaces();
+            //判断当前类型的接口数是否多于父类，否则就没有引入新的接口
+            if (pMT->GetNumInterfaces() > dwParentInterfaces)
+            {
+                MethodTable::InterfaceMapIterator it = pMT->IterateInterfaceMapFrom(dwParentInterfaces);
+                {
+                    while (!it.Finished())
+                    {
+                        MethodTable *pCurMT = it.GetInterface();
+                        MethodDesc *pCurMD = NULL;
+                        if (pCurMT == pInterfaceMT)
+                        {
+                            //找到匹配
+                            if (!pInterfaceMD->IsAbstract())
+                            {
+                                pCurMD = pInterfaceMD;
+                            }
+                        }
+                        else if (pCurMT->CanCastToInterface(pInterfaceMT))
+                        {
+                            //可以进行转换
+                            if (pCurMT->HasSameTypeDefAs(pInterfaceMT))
+                            {
+                                if (allowVariance && !pInterfaceMD->IsAbstract())
+                                {
+                                    //泛型协变逆变匹配，之后我们会用正确的参数将pCurMD实例化
+                                    pCurMD = pInterfaceMD;
+                                }
+                            }
+                            else
+                            {
+                                //一个更特化的接口，查找显式的重写
+                                //在默认接方法中隐式重写是不被允许的
+                                MethodIterator methodIt(pCurMT);
+                                for (; methodIt.IsValid() && pCurMD == NULL; methodIt.Next())
+                                {
+                                    MethodDesc *pMD = methodIt.GetMethodDesc();
+                                    int targetSlot = pInterfaceMD->GetSlot();
+                                    //如果此MethodDescriptor不是Impl,那么一定不是我们想要的
+                                    if (!pMD->IsMethodImpl())
+                                        continue;
+                                    //如果有Impl，遍历所有其实现的声明
+                                    //查找我们需要的接口方法
+                                    for (; it.IsValid() && pCurMD == NULL; it.Next())
+                                    {
+                                        MethodDesc *pDeclMD = it.GetMethodDesc();
+                                        //是否为正确的Slot
+                                        if (pDeclMD->GetSlot() != targetSlot)
+                                            continue;
+                                        //是否为正确的接口
+                                        if (!pDeclMD->HasSameMethodDefAs(pInterfaceMD))
+                                            continue;
+                                        if (pInterfaceMD->HasClassInstantiation())
+                                        {
+                                            //pInterfaceMD会处在代表性的形式，因此
+                                            //我们需要检查特化版本与pInterfaceMD
+                                            //pDeclMD的父类在这种情况下并不可靠因
+                                            //为其可能没有被代表化
+                                            SigTypeContext typeContext = SigTypeContext(pCurMT);
+                                            mdTypeRef tkParent;
+                                            IfFailThrow(pMD->GetModule()->GetMDImport()->GetParentToken(it.GetToken(), &tkParent));
+                                            MethodTable* pDeclMT = ClassLoader::LoadTypeDefOrRefOrSpecThrowing(
+                                                pMD->GetModule(),
+                                                tkParent,
+                                                &typeContext).AsMethodTable();
+                                            //我们使用CanCastToInterface来保证覆盖到了协变逆变
+                                            //我们已经知道这是一个在同一个类型定义的泛型接口上的函数
+                                            //但是我们需要确保实例化是匹配的
+                                            if ((allowVariance && pDeclMT->CanCastToInterface(pInterfaceMT))
+                                                || pDeclMT == pInterfaceMT)
+                                            {
+                                                //我们找到匹配了
+                                                pCurMD = pMD;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            //在没有泛型参与的情况下，如果方法定义匹配上了，那么就是一个匹配
+                                            pCurMD = pMD;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if(pCurMD != NULL)
+                        {
+                            //找到一个匹配，但是这是一个更具体的匹配(我们需要最具体化的接口匹配)
+                            if (pCurMD->HasClassOrMethodInstantiation())
+                            {
+                                //实例化MethodDescriptor
+                                //我们不想从此指针中获取泛型字典就需要传递神秘的类型参数
+                                //从实例化stub到解析的二义性
+                                pCurMD = MethodDesc::FindOrCreateAssociatedMethodDesc(
+                                    pCurMD,
+                                    pCurMT,
+                                    FALSE,                  // 强制封箱入口点
+                                    pCurMD->HasMethodInstantiation() ?
+                                        pCurMD->AsInstantiatedMethodDesc()->IMD_GetMethodInstantiation() :
+                                        Instantiation(),    // 对于那些本身就是泛型的函数
+                                    FALSE,                  
+                                    TRUE                    // 强制可远程方法
+                                );
+                                bool needToInsert = true;
+                                bool seenMoreSpecific = false;
+                                //我们需要维护一路上遇到的所有候选者中总是最具体化的，使其成为不变量
+                                //可能有多个不相容的候选者
+                                for (unsigned i = 0; i < candidatesCount; ++i)
+                                {
+                                    MethodTable *pCandidateMT = candidates[i].pMT;
+                                    if (pCandidateMT == NULL)
+                                        continue;
+                                    if (pCandidateMT == pCurMT)
+                                    {
+                                        //遇到重复的，结束了
+                                        needToInsert = false;
+                                        break;
+                                    }
+                                    if (allowVariance && pCandidateMT->HasSameTypeDefAs(pCurMT))
+                                    {
+                                        //在同一个类型上有协变逆变的匹配 - 平局
+                                    }
+                                    else if (pCurMT->CanCastToInterface(pCandidateMT))
+                                    {
+                                        //pCurMT是一个比重写IBlah的IFoo/IBar更为具体化的选择
+                                        if (!seenMoreSpecific)
+                                        {
+                                            //没有找到更具体化的，就设置当前的为
+                                            seenMoreSpecific = true;
+                                            candidates[i].pMT = pCurMT;
+                                            candidates[i].pMD = pCurMD;
+                                        }
+                                        else
+                                        {
+                                            candidates[i].pMT = NULL;
+                                            candidates[i].pMD = NULL;
+                                        }
+                                        needToInsert = false;
+                                    }
+                                    else if (pCandidateMT->CanCastToInterface(pCurMT))
+                                    {
+                                        //pCurMT更不具体化，那么我们就不需要扫描其余的Entry因为此Entry
+                                        //能够代表pCurMT（其余的都与pCurMT不相容）
+                                        needToInsert = false;
+                                        break;
+                                    }
+                                    else
+                                    {
+                                        //不相容，继续扫描
+                                    }
+                                }
+                                if (needToInsert)
+                                {
+                                    ASSERT(candidatesCount < candidates.Size());
+                                    candidates[candidatesCount].pMT = pCurMT;
+                                    candidates[candidatesCount].pMD = pCurMD;
+                                    candidatesCount++;
+                                }
+                            }
+                            it.Next();
+                        }
+                    }
+                    pMT = pParentMT;
+                }
+                //扫描并且查看是否有冲突
+                //如果我们在做第二遍(允许协变逆变)，我们不再寻找冲突了，仅仅选取第一个匹配就行了
+                MethodTable *pBestCandidateMT = NULL;
+                MethodDesc *pBestCandidateMD = NULL;
+                for (unsigned i = 0; i < candidatesCount; ++i)
+                {
+                    if (candidates[i].pMT == NULL)
+                        continue;
+                    if (pBestCandidateMT == NULL)
+                    {
+                        pBestCandidateMT = candidates[i].pMT;
+                        pBestCandidateMD = candidates[i].pMD;
+                        //第二遍
+                        if (allowVariance)
+                            break;
+                    }
+                    else if (pBestCandidateMT != candidates[i].pMT)
+                    {
+                        if (throwOnConflict)
+                            ThrowExceptionForConflictingOverride(this, pInterfaceMT, pInterfaceMD);
+                        *ppDefaultMethod = NULL;
+                        RETURN(FALSE);
+                    }
+                }
+                if (pBestCandidateMD != NULL)
+                {
+                    *ppDefaultMethod = pBestCandidateMD;
+                    RETURN(TRUE);
+                }
+            }
+        }
+    #else
+        *ppDefaultMethod = NULL;
+    #endif
+        RETURN(FALSE);
+    }
+
+找到对应的调度Slot
+
+    DispatchSlot FindDispatchSlot(UINT32 typeID, UINT32 slotNumber, BOOL throwOnConflict)
+    {
+        DispatchSlot implSlot(NULL);
+        FindDispatchImpl(typeID, slotNumber, &implSlot, throwOnConflict);
+        return implSlot;
+    }
+
+如果pMD有可能是泛型接口的函数的话，你必须使用下面这两个函数的第二个。ownerType被用于在pMD是共享的MethodDescriptor时提供具体的资格
+
+    DispatchSlot FindDispatchSlotForInterfaceMD(MethodDesc *pMD, BOOL throwOnConflict)
+    {
+        CONSISTENCY_CHECK(CheckPointer(pMD));
+        CONSISTENCY_CHECK(pMD->IsInterface());
+        //转发给第二个重载
+        return FindDispatchSlotForInterfaceMD(TypeHandle(pMD->GetMethodTable()), pMD, throwOnConflict);
+    }
+    DispatchSlot FindDispatchSlotForInterfaceMD(TypeHandle ownerType, MethodDesc *pMD, BOOL throwOnConflict)
+    {
+        CONSISTENCY_CHECK(!ownerType.IsNull());
+        CONSISTENCY_CHECK(CheckPointer(pMD));
+        CONSISTENCY_CHECK(pMD->IsInterface());
+        return FindDispatchSlot(ownerType.GetMethodTable()->GetTypeID(), pMD->GetSlot(), throwOnConflict);
+    }
+
+此函数被用于通过ComPlusMethodCall的Method Descriptor反向查找方法实现
+此函数有以下假定:
+         1.此函数实现是对 InterfaceToken->Slot索引 的实现
+         2.对此Slot索引只有一个这样的映射
+         3.此映射存在于此类型，而不是父类型中
+
+    MethodDesc *ReverseInterfaceMDLookup(UINT32 slotNumber)
+    {
+        DispatchMap::Iterator it(this);
+        //遍历调度图
+        for (; it.IsValid(); it.Next())
+        {
+            if (it.Entry()->GetTargetSlotNumber() == slotNumber)
+            {
+                DispatchMapTypeID typeID = it.Entry()->GetTypeID();
+                _ASSERTE(!typeID.IsThisClass());
+                UINT32 slotNum = it.Entry()->GetSlotNumber();
+                MethodTable * pMTItf = LookupDispatchMapType(typeID);
+                CONSISTENCY_CHECK(CheckPointer(pMTItf));
+                MethodDesc *pCanonMD = pMTItf->GetMethodDescForSlot((DWORD)slotNum);
+                return MethodDesc::FindOrCreateAssociatedMethodDesc(
+                        pCanonMD, 
+                        pMTItf, 
+                        FALSE,              // 强制封箱入口
+                        Instantiation(),    
+                        FALSE,              
+                        TRUE);  
+            }
+        }
+        return NULL;
+    }
+
+获取查找类型的ID，如果没有被赋值，则不会对其赋值
+
+    UINT32 LookupTypeID()
+    {
+        PTR_MethodTable pMT = PTR_MethodTable(this);
+        return GetDomain()->LookupTypeID(pMT);
+    }
+
+获取查找类型的ID，如果没有被赋值，则会对其赋值
+
+    UINT32 GetTypeID()
+    {
+        PTR_MethodTable pMT = PTR_MethodTable(this);
+        return GetDomain()->GetTypeID(pMT);
+    }
+
+在调度Map中根据Type ID查找类型
+
+    MethodTable *LookupDispatchMapType(DispatchMapTypeID typeID)
+    {
+        _ASSERTE(!typeID.IsThisClass());
+        InterfaceMapIterator intIt = IterateInterfaceMapFrom(typeID.GetInterfaceNum());
+        return intIt.GetInterface();
+    }
+
+获取类型引入的方法Method Descriptor
+
+    MethodDesc *GetIntroducingMethodDesc(DWORD slotNumber)
+    {
+        MethodDesc * pCurrentMD = GetMethodDescForSlot(slotNumber);
+        DWORD        dwSlot = pCurrentMD->GetSlot();
+        MethodDesc * pIntroducingMD = NULL;
+        MethodTable * pParentType = GetParentMethodTable();
+        MethodTable * pPrevParentType = NULL;
+        //遍历继承链，如果Slot数在Virtual-Table数之外(也就是在其之后，为引入的方法，就停止)
+        //如果不存在于父类之中，那么一定会在相同的V-Table Slot处
+        while ((pParentType != NULL) &&
+           (dwSlot < pParentType->GetNumVirtuals()))
+        {
+            pPrevParentType = pParentType;
+            pParentType = pParentType->GetParentMethodTable();
+        }
+        if (pPrevParentType != NULL)
+        {
+            pIntroducingMD = pPrevParentType->GetMethodDescForSlot(dwSlot);
+        }
+        return pIntroducingMD;
+    }
+
+决定给定的接口里所有的方法是否在当前类型的父类中拥有最终实现。如果返回true的话，那么就可以直接在此类型
+上调度函数而不是使用VSD
+
+    BOOL ImplementsInterfaceWithSameSlotsAsParent(MethodTable *pItfMT, MethodTable *pParentMT)
+    {
+        MethodTable *pMT = this;
+        do
+        {
+            DispatchMap::EncodedMapIterator it(pMT);
+            for (; it.IsValid(); it.Next())
+            {
+                DispatchMapEntry *pCurEntry = it.Entry();
+                if (LookupDispatchMapType(pCurEntry->GetTypeID()) == pItfMT)
+                {
+                    //此类型与其父类型一直到pParentMT一定没有对此接口的映射
+                    return FALSE;
+                }
+            }
+             pMT = pMT->GetParentMethodTable();
+            _ASSERTE(pMT != NULL);
+        }
+        while(pMT != pParentMT);
+        return TRUE;
+    }
+
+决定是否所有在给定接口中的方法都在其一个父类型中拥有最终实现。如果此函数返回true，那么此类型在接口函数调度时就与父类型的行为一致
+
+    BOOL HasSameInterfaceImplementationAsParent(MethodTable *pItfMT, MethodTable *pParentMT)
+    {
+        if (!ImplementsInterfaceWithSameSlotsAsParent(pItfMT, pParentMT))
+        {
+            //如果Slot都不一样，那么此类型一定重新实现了接口
+            return FALSE;
+        }
+        //即使目标的Slot都是一样的，他们仍然能被重写。我们会从继承链的pParentMT开始迭代整个调度Map
+        //并且对于每一个接口的MethodTable的Entry进行内容检查(pParentMT和此类型)。一次匹配出错
+        //意味着有一个重写。我们会跟踪我们所看到的所有Slot的源头(接口)以便于我们可以忽略在pParentMT
+        //级别上已经没有效果的Entry(那些在继承链更高地方的Entry，他们已经被重写了)
+        BitMask bitMask;
+        WORD wSeenSlots = 0;
+        WORD wTotalSlots = pItfMT->GetNumVtableSlots();
+        MethodTable *pMT = pParentMT;
+        do
+        {
+            DispatchMap::EncodedMapIterator it(pMT);
+            for (; it.IsValid(); it.Next())
+            {
+                DispatchMapEntry *pCurEntry = it.Entry();
+                if (LookupDispatchMapType(pCurEntry->GetTypeID()) == pItfMT)
+                {
+                    UINT32 ifaceSlot = pCurEntry->GetSlotNumber();
+                    //检查是否访问过
+                    if (!bitMask.TestBit(ifaceSlot))
+                    {
+                        bitMask.SetBit(ifaceSlot);
+                        UINT32 targetSlot = pCurEntry->GetTargetSlotNumber();
+                        if (GetRestoredSlot(targetSlot) != pParentMT->GetRestoredSlot(targetSlot))
+                        {
+                            //目标Slot已经被重写
+                            return FALSE;
+                        }
+                        if (++wSeenSlots == wTotalSlots)
+                        {
+                            //解析过所有Slot后我们没有理由再继续下去
+                            break;
+                        }
+                    }
+                }
+            }
+            pMT = pMT->GetParentMethodTable();
+        }
+        while (pMT != NULL);
+        return TRUE;
+    }
+将方法声明映射到实现
+
+    static MethodDesc *MapMethodDeclToMethodImpl(MethodDesc *pMDDecl)
+    {
+        MethodTable * pMT = pMDDecl->GetMethodTable();
+        //快速失败检查
+        //如果这个方法不是虚方法，那么其不可能被映射到对应的方法实现上
+        if (!pMDDecl->IsVirtual() ||
+            //其是否为一个调用实例化Stub的非虚Stub
+            (pMT->IsValueType() && !pMDDecl->IsUnboxingStub()))
+        {
+            return pMDDecl;
+        }
+        MethodDesc * pMDImpl = pMT->GetParallelMethodDesc(pMDDecl);
+        //如果方法被实例化了，因此我们需要为新Slot索引解析其对应的实例化Method Descriptor
+        if (pMDDecl->HasMethodInstantiation())
+        {
+            if (pMDDecl->GetSlot() != pMDImpl->GetSlot())
+            {
+                if (!pMDDecl->IsGenericMethodDefinition())
+                {
+        #ifndef DACCESS_COMPILE
+                    pMDImpl = pMDDecl->FindOrCreateAssociatedMethodDesc(
+                                        pMDImpl,
+                                        pMT,
+                                        pMDDecl->IsUnboxingStub(),
+                                        pMDDecl->GetMethodInstantiation(),
+                                        pMDDecl->IsInstantiatingStub());
+        #else
+                    DacNotImpl();
+        #endif
+                }
+            }
+        }
+        else
+        {
+            //因为泛型方法定义总是在MethodTable的真实Slot上，并且因为对实现和定义的Slot
+            //都是一样的，那么调用FindOrCreateAssociatedMethodDesc会导致返回相同的
+            //pMDDecl，在这种情况下，我们可以跳过这个工作
+            pMDImpl = pMDDecl;
+        }
+        CONSISTENCY_CHECK(CheckPointer(pMDImpl));
+        CONSISTENCY_CHECK(!pMDImpl->IsGenericMethodDefinition());
+        return pMDImpl;
+    }
 #### 终结(Finalization)语义
 
 #### 静态字段
