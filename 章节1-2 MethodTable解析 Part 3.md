@@ -1153,19 +1153,425 @@ COM交互
         return pMDImpl;
     }
 #### 终结(Finalization)语义
+在没有Finalizer的情况下可以使用快速助手
+
+    DWORD  CannotUseSuperFastHelper()
+    {
+        return HasFinalizer();
+    }
+
+    void SetHasFinalizer()
+    {
+        SetFlag(enum_flag_HasFinalizer);
+    }
+这个类型是否有非平凡的终结要求？
+
+    DWORD HasFinalizer()
+    {
+        return GetFlag(enum_flag_HasFinalizer);
+    }
+在AppDomain被强制卸载时此类型是否需要被终结?
+并且此类型的终结器必须使用与其他正常终结器不同的顺序么?
+
+    DWORD HasCriticalFinalizer() const
+    {
+        return GetFlag(enum_flag_HasCriticalFinalizer);
+    }
 
 #### 静态字段
+以下4个函数均为DAC编译且转发到Module的返回
+
+    inline PTR_BYTE GetNonGCStaticsBasePointer();//从略
+    inline PTR_BYTE GetGCStaticsBasePointer();//从略
+
+    inline PTR_BYTE GetNonGCThreadStaticsBasePointer()
+    {
+        //获取当前线程
+        PTR_Thread pThread = dac_cast<PTR_Thread>(GetThread());
+        //获取当前模块的索引
+        ModuleIndex index = GetModuleForStatics()->GetModuleIndex();
+        //获取线程当前的本地Block
+        PTR_ThreadLocalBlock pTLB = ThreadStatics::GetCurrentTLB(pThread);
+        //获取线程本地Module
+        PTR_ThreadLocalModule pTLM = pTLB->GetTLMIfExists(index);
+        if (pTLM == NULL)
+            return NULL;
+        return pTLM->GetNonGCStaticsBasePointer(this);
+    }
+对于下面这个函数也是雷同的，通过获取线程本地(threadlocal 关键字)的Module来得到静态变量的基地址
+
+    inline PTR_BYTE GetGCThreadStaticsBasePointer();
+
+下面的四个函数都是通过Test或者SetFlag来转发实现的，从略
+
+    inline DWORD IsDynamicStatics();
+    inline void SetDynamicStatics(BOOL fGeneric);
+    inline void SetHasBoxedRegularStatics();
+    inline DWORD HasBoxedRegularStatics();
+此函数转发到EEClass
+
+    DWORD HasFixedAddressVTStatics();
+好像混入了什么奇怪的东西(同转发到EEClass)
+
+    BOOL HasOnlyAbstractMethods();
 
 #### 实例化静态信息
+    void SetupGenericsStaticsInfo(FieldDesc* pStaticFieldDescs)
+    {
+        //没有必要为开放类型生成ID，实际上我们没有把他们存放于NGen映像中
+        //因为这样做是错误的
+        //然而，我们在MethodTable的可选成员中为ID设置为-1
+        GenericsStaticsInfo *pInfo = GetGenericsStaticsInfo();
+        if (!ContainsGenericVariables() && !IsSharedByGenericInstantiations())
+        {
+            //不是泛型实例共享的部分
+            //不含有泛型参数，即为普通类型
+            Module * pModuleForStatics = GetLoaderModule();
+            pInfo->m_DynamicTypeID = pModuleForStatics->AllocateDynamicEntry(this);
+        }
+        else
+        {
+            pInfo->m_DynamicTypeID = (SIZE_T)-1;
+        }
+        pInfo->m_pFieldDescs.SetValueMaybeNull(pStaticFieldDescs);
+    }
+
+以下函数均为Flag获取或者转发到EEClass
+
+    BOOL HasGenericsStaticsInfo();
+    PTR_FieldDesc GetGenericsStaticFieldDescs();
+    BOOL HasCrossModuleGenericStaticsInfo();
+    PTR_Module GetGenericsStaticsModuleAndID(DWORD * pID);
+    WORD GetNumHandleRegularStatics();
+    WORD GetNumBoxedRegularStatics ();
+    WORD GetNumBoxedThreadStatics ();
 
 #### 动态ID
+此API被用作泛型和内存里的反射Emit
 
+    DWORD GetModuleDynamicEntryID()
+    {
+        if (HasGenericsStaticsInfo())
+        {
+            DWORD dwDynamicClassDomainID;
+            GetGenericsStaticsModuleAndID(&dwDynamicClassDomainID);
+            return dwDynamicClassDomainID;
+        }
+        else
+        {
+            return GetClass()->GetModuleDynamicID();
+        }
+    }
+    Module* GetModuleForStatics()
+    {
+        if (HasGenericsStaticsInfo())
+        {
+            DWORD dwDynamicClassDomainID;
+            return GetGenericsStaticsModuleAndID(&dwDynamicClassDomainID);
+        }
+        else
+        {
+            return GetLoaderModule();
+        }
+    }
 #### 泛型字典信息
-
+    //获取泛型参数个数
+    inline DWORD GetNumGenericArgs()
+    {
+        LIMITED_METHOD_DAC_CONTRACT;
+        if (HasInstantiation())
+            return (DWORD) (GetGenericsDictInfo()->m_wNumTyPars);
+        else
+            return 0;
+    }
+    //获取Dictionary的数量(关于Dictionary参见上面的注释)
+    inline DWORD GetNumDicts()
+    {
+        LIMITED_METHOD_DAC_CONTRACT;
+        if (HasPerInstInfo())
+        {
+            PTR_GenericsDictInfo  pDictInfo = GetGenericsDictInfo();
+            return (DWORD) (pDictInfo->m_wNumDicts);
+        }
+        else
+            return 0;
+    }
 #### 对象
+    OBJECTREF Allocate()
+    {
+        //当被完全加载时才能进行内存分配
+        CONSISTENCY_CHECK(IsFullyLoaded());
+        //
+        EnsureInstanceActive();
+        if (HasPreciseInitCctors())
+        {
+            //类初始化构造函数
+            CheckRunClassInitAsIfConstructingThrowing();
+        }
+        return AllocateObject(this);
+    }
+下面这个函数更为高效，但仅能用于IsRestored()，CheckInstanceActivated(), IsClassInited()都为true时。充分条件是在此AppDomain内已经有相同类型的实例存在。此函数目前只在Delegate.Combine内部通过COMDelegate::InternalAllocLike调用
+
+    OBJECTREF AllocateNoChecks()
+    {
+        CONSISTENCY_CHECK(IsRestored_NoLogging());
+        CONSISTENCY_CHECK(CheckInstanceActivated());
+        return AllocateObject(this);
+    }
+
+接下来是几个有关拆装箱的函数。
+有关函数需要处理Nullable的特殊情况
+
+    OBJECTREF Box(void* data)
+    {
+        OBJECTREF ref;
+        GCPROTECT_BEGININTERIOR (data);
+        //是否为ref struct
+        if (IsByRefLike())
+        {
+            //永远都不应该对一个含有栈指针的类型装箱
+            COMPlusThrow(kInvalidOperationException, W("InvalidOperation_TypeCannotBeBoxed"));
+        }
+        ref = FastBox(&data);
+        GCPROTECT_END ();
+        return ref;
+    }
+    OBJECTREF FastBox(void** data)
+    {
+        //检查是否为Nullable，如果是，将其转发到Nullable::Box
+        if (IsNullable())
+            return Nullable::Box(*data, this);
+        //分配对象
+        OBJECTREF ref = Allocate();
+        //拷贝值类型
+        CopyValueClass(ref->UnBox(), *data, this);
+    }
+    BOOL UnBoxInto(void *dest, OBJECTREF src)
+    {
+        //转发
+        if (Nullable::IsNullableType(TypeHandle(this)))
+            return Nullable::UnBoxNoGC(dest, src, this);
+        else  
+        {
+            if (src == NULL || src->GetMethodTable() != this)
+                return FALSE;
+            //直接拷贝
+            CopyValueClass(dest, src->UnBox(), this);
+        }
+        return TRUE;
+    }
+拆箱到参数上，这个API很容易就可以被关系到实际应用场景:Delegate.DynamicInvoke
+
+    BOOL UnBoxIntoArg(ArgDestination *argDest, OBJECTREF src)
+    {
+        if (Nullable::IsNullableType(TypeHandle(this)))
+            return Nullable::UnBoxIntoArgNoGC(argDest, src, this);
+        else  
+        {   
+            if (src == NULL || src->GetMethodTable() != this)
+                return FALSE;
+            CopyValueClassArg(argDest, src->UnBox(), this, 0);
+        }
+        return TRUE;
+    }
+无检查快速拆箱
+
+    void UnBoxIntoUnchecked(void *dest, OBJECTREF src)
+    {
+        if (Nullable::IsNullableType(TypeHandle(this))) {
+        BOOL ret;
+        ret = Nullable::UnBoxNoGC(dest, src, this);
+        _ASSERTE(ret);
+        }
+        else  
+        {
+            _ASSERTE(src->GetMethodTable()->GetNumInstanceFieldBytes() == GetNumInstanceFieldBytes());
+            CopyValueClass(dest, src->UnBox(), this);
+        }
+    }
+判断是否为敏捷并且可执行Finalize的类型
+
+    inline BOOL IsAgileAndFinalizable()
+    {
+        //目前只有System.Thread满足这个条件
+        //这个条件应当一直保持，请不要在没有和EE团队谈过之前更改
+        return this == g_pThreadClass;
+    }
 
 #### 枚举，委托，ValueType，数组
+元素类型的种类:
+GetInternalCorElementType()获取类型的内部表示。使用此函数不一定总是恰当的。比如，我们将枚举看作其底层类型或者某些结构体被优化成了int的组合。为了得到签名类型或者验证者类型(与签名类型相同，除了枚举被归一化到其实现的底层基元类型)，使用TypeHandle.h里的这些API:
 
+    TypeHandle.GetSignatureCorElementType()
+    TypeHandle.GetVerifierCorElementType()
+    TypeHandle.GetInternalCorElementType()
+此函数会:
+-返回枚举的底层类型
+-为System.Int32等返回底层基元类型
+-会返回在调用约定中被使用到的底层基元类型,比如对于
+struct type{public int i;} 在x86下会返回ELEMENT_TYPE_I4而不是ELEMENT_TYPE_VALUETYPE, 我们将这种类型的值类型称为基元值类型。内部表示被用于调用约定之中(JIT从基元值类型中受益)或者优化封送。此函数不会转换E_T_ARRAY,E_T_SZARRAY等到E_T_CLASS(即使应当这么做)
+
+    CorElementType GetInternalCorElementType()
+    {
+        //此函数不应当碰EEClass，至少在ELEMENT_TYPE_CLASS和ELEMENT_TYPE_VALUETYPE这种
+        //通常情况下不应该
+        g_IBCLogger.LogMethodTableAccess(this);
+        CorElementType ret;
+        switch (GetFlag(enum_flag_Category_ElementTypeMask))
+        {
+        case enum_flag_Category_Array:
+            ret = ELEMENT_TYPE_ARRAY;
+            break;
+        case enum_flag_Category_Array | enum_flag_Category_IfArrayThenSzArray:
+            ret = ELEMENT_TYPE_SZARRAY;
+            break;
+        case enum_flag_Category_ValueType:
+            ret = ELEMENT_TYPE_VALUETYPE;
+            break;
+        case enum_flag_Category_PrimitiveValueType:
+            //此路径应当只被mscorlib的内建类型和基元值类型所访问
+            ret = GetClass()->GetInternalCorElementType();
+            _ASSERTE((ret != ELEMENT_TYPE_CLASS) && 
+                        (ret != ELEMENT_TYPE_VALUETYPE));
+            break;
+        default:
+            ret = ELEMENT_TYPE_CLASS;
+            break;
+        }
+        return ret;
+    }
+
+    void SetInternalCorElementType(CorElementType _NormType)
+    {
+        switch (_NormType)
+        {
+            case ELEMENT_TYPE_CLASS:
+            _ASSERTE(!IsArray());
+            //什么都不需要做
+            break;
+        case ELEMENT_TYPE_VALUETYPE:
+            SetFlag(enum_flag_Category_ValueType);
+            _ASSERTE(GetFlag(enum_flag_Category_Mask) == enum_flag_Category_ValueType);
+            break;
+        default:
+            SetFlag(enum_flag_Category_PrimitiveValueType);
+            _ASSERTE(GetFlag(enum_flag_Category_Mask) == enum_flag_Category_PrimitiveValueType);
+            break;
+        }
+        GetClass_NoLogging()->SetInternalCorElementType(_NormType);
+        _ASSERTE(GetInternalCorElementType() == _NormType);
+    }
+此帮助函数会返回GetInternalCorElementType一样的类型，除了枚举类型会返回底层类型
+
+    CorElementType GetVerifierCorElementType()
+    {
+        g_IBCLogger.LogMethodTableAccess(this);
+        CorElementType ret;
+        switch (GetFlag(enum_flag_Category_ElementTypeMask))
+        {
+        case enum_flag_Category_Array:
+            ret = ELEMENT_TYPE_ARRAY;
+            break;
+        case enum_flag_Category_Array | enum_flag_Category_IfArrayThenSzArray:
+            ret = ELEMENT_TYPE_SZARRAY;
+            break;
+        case enum_flag_Category_ValueType:
+            ret = ELEMENT_TYPE_VALUETYPE;
+            break;
+        case enum_flag_Category_PrimitiveValueType:
+            //这是唯一与MethodTable::GetInternalCorElementType()所不同的地方
+            if (IsTruePrimitive() || IsEnum())
+                ret = GetClass()->GetInternalCorElementType();
+            else
+                ret = ELEMENT_TYPE_VALUETYPE;            
+            break;
+        default:
+            ret = ELEMENT_TYPE_CLASS;
+            break;
+        }
+        return ret;
+    }
+返回你在签名里需要使用的ELELEMT_TYPE_*。这其中唯一发生的归一化是针对实例化的类型(比如 List<String>或者值类型Pair<int,int>)此函数要么返回ELEMENT_TYPE_CLASS要么返回ELEMENT_TYPE_VALUE,而不是ELEMENT_TYPE_WITH
+
+    CorElementType GetSignatureCorElementType()
+    {
+        g_IBCLogger.LogMethodTableAccess(this);
+        CorElementType ret;
+        switch (GetFlag(enum_flag_Category_ElementTypeMask))
+        {
+        case enum_flag_Category_Array:
+            ret = ELEMENT_TYPE_ARRAY;
+            break;
+        case enum_flag_Category_Array | enum_flag_Category_IfArrayThenSzArray:
+            ret = ELEMENT_TYPE_SZARRAY;
+            break;
+        case enum_flag_Category_ValueType:
+            ret = ELEMENT_TYPE_VALUETYPE;
+            break;
+        case enum_flag_Category_PrimitiveValueType:
+            //这是唯一与MethodTable::GetInternalCorElementType()所不同的地方
+            if (IsTruePrimitive())
+                ret = GetClass()->GetInternalCorElementType();
+            else
+                ret = ELEMENT_TYPE_VALUETYPE;            
+            break;
+        default:
+            ret = ELEMENT_TYPE_CLASS;
+            break;
+        }
+        return ret;
+    }
+真正的基元类型是:类型的GetVerifierCorElementType()是ELEMENT_TYPE_I,ELEMENT_TYPE_I4,ELEMENT_TYPE_TYPEDBYREF之类的。需要注意的是，GetIntenalCorElementType可能对一些附加类型如枚举和一些结构体返回相同的值。
+
+    BOOL IsTruePrimitive()
+    {
+        return GetFlag(enum_flag_Category_Mask) == enum_flag_Category_TruePrimitive;
+    }
+
+     void SetIsTruePrimitive()
+     {
+        SetFlag(enum_flag_Category_TruePrimitive);
+     }
+是否为委托，对于System.Delegate和System.MulticastDelegate返回false
+
+     inline BOOL IsDelegate()
+     {
+        //我们不再允许单播委托了，仅仅检查多播委托
+         _ASSERTE(g_pMulticastDelegateClass);
+        return ParentEquals(g_pMulticastDelegateClass);
+     }
+是否为System.Object
+
+    inline BOOL IsObjectClass()
+    {
+        _ASSERTE(g_pObjectClass);
+        return (this == g_pObjectClass);
+    }
+是否为System.ValueType
+
+    inline DWORD IsValueTypeClass()
+    {
+        _ASSERTE(g_pValueTypeClass);
+        return (this == g_pValueTypeClass);
+    }
+是否为值类型，对System.ValueType和System.Enum返回false
+
+    inline BOOL IsValueType()
+    {
+        g_IBCLogger.LogMethodTableAccess(this);
+        return GetFlag(enum_flag_Category_ValueType_Mask) == enum_flag_Category_ValueType;
+    }
+
+此函数返回true，当且仅当此类型的返回buffer必须是栈分配的。这个通常只会在struct包含有GC指针时成立，并且不超过一些大小的限制。把此当作不变量允许了一个优化动作:JIT可能假定对于此函数返回true的类型的buffer指针总是栈上分配的，因此，储存到GC指针的字段不需要GC写屏障。
+
+    BOOL IsStructRequiringStackAllocRetBuf()
+    {
+        //禁用此优化，其有限制的值(仅仅在x86上有效，且仅针对那些不太常见的结构体)
+        //且会导致bug并且引入与ReadyToRun不相容的奇怪ABI差异
+        return FALSE;
+    }
+
+    
 #### 底层元数据
 
 #### 远程函数信息
