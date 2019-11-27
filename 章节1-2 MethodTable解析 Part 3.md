@@ -243,6 +243,26 @@ COM交互
         }
     }
     #endif
+约束调用：词语来源于MSIL中的 constrained 指令，此指令被用于在应对值类型上调用引用类型的重写虚方法时应对更改自身的副作用。
+比如:
+
+    struct VT
+    {
+        public int i=0;
+        public string ToString()
+        {
+            i++;
+            return i.ToString();            
+        }
+    }
+    代码如下:
+    VT variable=new VT();
+    Console.WriteLine(variable.ToString());
+    Console.WriteLine(variable.i);
+    结果:
+    1
+    1
+这里我们知道的是，如果一个值类型实现或重写了接口或者System.Object的虚方法，那么在值类型上调用虚方法时，需要首先将对象的拷贝装箱到对应引用类型再调用。这种情况下，如果重写的成员方法对自身成员有副作用，那么必须反映到栈上的variable，而不是更改装箱的拷贝值。
 
     //* 尝试部分解析约束调用，取决于泛型代码共享
     //* 需要注意的是，这实际上不会必要地解析到具体的调用上
@@ -258,17 +278,18 @@ COM交互
     //  如果必须使用VSD，那么就返回null
     MethodDesc * TryResolveConstraintMethodApprox(
         TypeHandle   ownerType, 
-        MethodDesc * pMD, 
+        MethodDesc * pInterfaceMD, 
         BOOL *       pfForceUseRuntimeLookup = NULL)
     {
-        //不是ValueType，直接返回null
+        //当前类型不是ValueType，直接返回null
         if (!IsValueType())
         {
             LOG((LF_JIT, LL_INFO10000, "TryResolveConstraintmethodApprox: not a value type %s\n", GetDebugClassName()));
             return NULL;
         }
-        //如果我们在封箱的ValueType上调用函数，首先找到实现了约束(可能的泛型)方法
+        //如果我们在封箱的ValueType上调用函数，首先找到实现了约束(可能是泛型)的方法
         MethodTable * pCanonMT = GetCanonicalMethodTable();
+        //去掉方法实例化，替换为一般性的泛型参数( Type<int>.Method<String> -> Type<int>.Method<U> )
         MethodDesc * pGenInterfaceMD = pInterfaceMD->StripMethodInstantiation();
         MethodDesc * pMD = NULL;
         if (pGenInterfaceMD->IsInterface())
@@ -284,15 +305,15 @@ COM交互
             while (it.Next())
             {
                 TypeHandle thPotentialInterfaceType(it.GetInterface());
-                //比较相容接口
+                //比较相容接口(泛型或普通意义上等同的接口)
                 if (thPotentialInterfaceType.AsMethodTable()->GetCanonicalMethodTable() ==
                     thInterfaceType.AsMethodTable()->GetCanonicalMethodTable())
                 {
-                    //计数自增
+                    //可能的匹配接口计数自增
                     cPotentialMatchingInterfaces++;
                     //获取目标MethodDescriptor
                     pMD = pCanonMT->GetMethodDescForInterfaceMethod(thPotentialInterfaceType, pGenInterfaceMD, FALSE);
-                    //非ValueType
+                    //解析到的实现方法的声明类型并不是ValueType且pMD也不是一个接口声明方法，解析失败
                     if ((pMD != NULL) && !pMD->GetMethodTable()->IsValueType() && !pMD->IsInterface())
                     {
                         LOG((LF_JIT, LL_INFO10000, "TryResolveConstraintMethodApprox: %s::%s not a value type method\n",
@@ -301,7 +322,7 @@ COM交互
                     }
                 }
             }
-            //检查数量
+            //检查可能的匹配接口数量
             _ASSERTE_MSG((cPotentialMatchingInterfaces != 0),
             "At least one interface has to implement the method, otherwise there's a bug in JIT/verification.");
             if (cPotentialMatchingInterfaces > 1)
@@ -309,7 +330,11 @@ COM交互
                 //我们有很多个可能的接口匹配
                 MethodTable * pInterfaceMT = thInterfaceType.GetMethodTable();
                 _ASSERTE(pInterfaceMT->HasInstantiation());
+                //是否有确切的方法被解析到了
                 BOOL fIsExactMethodResolved = FALSE;
+                //接口MethodTable没有被泛型共享
+                //接口MethodTable不是泛型定义
+                //此类型也同上
                 if (!pInterfaceMT->IsSharedByGenericInstantiations() &&
                     !pInterfaceMT->IsGenericTypeDefinition() &&
                     !this->IsSharedByGenericInstantiations() &&
@@ -348,7 +373,8 @@ COM交互
         }
         else if (pGenInterfaceMD->IsVirtual())
         {
-            //ValueType且无VTableSlot
+            //如果Interface的对应MD
+            //ValueType且拥有有非VTable的Slot
             if (pGenInterfaceMD->HasNonVtableSlot() && pGenInterfaceMD->GetMethodTable()->IsValueType())
             {
                 //GetMethodDescForSlot对此Slot可能会引发AV
@@ -359,6 +385,7 @@ COM交互
             }
             else
             {
+                //获取
                 pMD = GetMethodDescForSlot(pGenInterfaceMD->GetSlot());
             }
         }
@@ -394,6 +421,7 @@ COM交互
         }
         return pMD;
     }
+关于constrainted 前缀指令，Roslyn会对接口的调用直接生成call，对值类型重写的System.Object的虚方法会生成 constrainted + callvirt，因为struct不可继承，也就不存在重写。
 
 #### 协议实现
     //是否有调度Map
@@ -1570,11 +1598,174 @@ struct type{public int i;} 在x86下会返回ELEMENT_TYPE_I4而不是ELEMENT_TYP
         //且会导致bug并且引入与ReadyToRun不相容的奇怪ABI差异
         return FALSE;
     }
+是否为Enum，对System.Enum返回false
 
-    
+    inline BOOL IsEnum()
+    {
+        //此函数不应当在父Method Table有效前被调用
+        _ASSERTE_IMPL(IsParentMethodTablePointerValid());
+        PTR_MethodTable pParentMT = GetParentMethodTable();
+        //确保不是在启动时使用此函数
+        _ASSERTE(g_pEnumClass != NULL);
+        return (pParentMT == g_pEnumClass);
+    }
+是否为Array
+
+    inline BOOL IsArray()
+    {
+        return GetFlag(enum_flag_Category_Array_Mask) == enum_flag_Category_Array; 
+    }
+如果此类型对某些类型是Nullable<T>则返回true
+
+    inline BOOL IsNullable()
+    {
+        return GetFlag(enum_flag_Category_Mask) == enum_flag_Category_Nullable;
+    }
+结构体是否可以被封送
+
+    inline BOOL IsStructMarshalable() 
+    {
+        PRECONDITION(!IsInterface());
+        //不是接口即可以被封送
+        return GetFlag(enum_flag_IfNotInterfaceThenMarshalable); 
+    }
+
+    inline void SetStructMarshalable()
+    {
+        PRECONDITION(!IsInterface());
+        SetFlag(enum_flag_IfNotInterfaceThenMarshalable);
+    }
+接下来的函数仅对数组类型有效。这些Method Table可能被多个数组类型锁共享，因此GetArrayElementTypeHandle可能仅仅是一个大概的类型。如果你需要确切的元素类型那么你应当在TypeHandle对象，ArrayTypeDesc或者一个已知是Array的对象(比如BASEARRAYREF)的引用上调用GetArrayElementTypeHandle函数
+
+    CorElementType GetArrayElementType()
+    {
+        _ASSERTE (IsArray());
+        return dac_cast<PTR_ArrayClass>(GetClass())->GetArrayElementType();
+    }
+获得数组的维度
+
+    DWORD GetRank()
+    {
+        if (GetFlag(enum_flag_Category_IfArrayThenSzArray))
+            return 1;//单维零基数组
+        else
+            return dac_cast<PTR_ArrayClass>(GetClass())->GetRank();
+    }
+下面四个函数都是利用TypeHandle的函数实现的
+
+    TypeHandle GetApproxArrayElementTypeHandle();
+    void SetApproxArrayElementTypeHandle(TypeHandle th);
+    TypeHandle * GetApproxArrayElementTypeHandlePtr();
+    static inline DWORD GetOffsetOfArrayElementTypeHandle();
+
 #### 底层元数据
+获取元数据对应的类型声明的RID或Token
 
+    unsigned GetTypeDefRid()
+    {
+        g_IBCLogger.LogMethodTableAccess(this);
+        return GetTypeDefRid_NoLogging();
+    }
+    unsigned GetTypeDefRid_NoLogging()
+    {
+        WORD token = m_wToken;
+        //如果Token溢出，就取溢出后放置的值
+        if (token == METHODTABLE_TOKEN_OVERFLOW)
+            return (unsigned)*GetTokenOverflowPtr();
+        //否则返回原有值
+        return token;
+    }
+类型元数据获取与设置，非常简单
+
+    inline mdTypeDef GetCl()
+    {
+        return TokenFromRid(GetTypeDefRid(), mdtTypeDef);
+    }
+    inline mdTypeDef GetCl_NoLogging()
+    {
+        return TokenFromRid(GetTypeDefRid_NoLogging(), mdtTypeDef);
+    }
+    void SetCl(mdTypeDef token)
+    {
+        unsigned rid = RidFromToken(token);
+        if (rid >= METHODTABLE_TOKEN_OVERFLOW)
+        {
+            m_wToken = METHODTABLE_TOKEN_OVERFLOW;
+            *GetTokenOverflowPtr() = rid;
+        }
+        else
+        {
+            _ASSERTE(FitsIn<U2>(rid));
+            m_wToken = (WORD)rid;        
+        }
+        _ASSERTE(GetCl() == token);
+    }
+Token是否溢出了
+
+    BOOL HasTokenOverflow()
+    {
+        return m_wToken == METHODTABLE_TOKEN_OVERFLOW;
+    }
+获取从内部导出元数据的接口(对COM)
+
+    IMDInternalImport* GetMDImport()
+    {
+        return GetModule()->GetMDImport();
+    }
+    HRESULT GetCustomAttribute(WellKnownAttribute attribute,
+                               const void  **ppData,
+                               ULONG *pcbData)
+    {
+        return GetModule()->GetCustomAttribute(GetCl(), attribute, ppData, pcbData);
+    }
+获取闭包类型的Token，也就是从一个嵌套类出发，获取外部的类型。当EEClass不是一个嵌套类时，返回mdTypeDefNil
+
+    mdTypeDef GetEnclosingCl()
+    {
+        mdTypeDef tdEnclosing = mdTypeDefNil;
+        if (GetClass()->IsNested())
+        {
+            HRESULT hr = GetMDImport()->GetNestedClassProps(GetCl(), &tdEnclosing);
+            if (FAILED(hr))
+            {
+                ThrowHR(hr, BFA_UNABLE_TO_GET_NESTED_PROPS);
+            }
+        }
+        return tdEnclosing;
+    }
 #### 远程函数信息
+这些都是通过Flag设置或者获取实现的，相对简单，这里不再展开。不过值得一提的是，我们肯定知道RCW表示Runtime Callable Wrapper。那么这里CCW实际上的意思是COM Callable Wrapper。前者是通过RCW使得托管代码可以与非托管代码交互，后者就是非托管代码通过CCW与托管代码交互。
+
+    void SetHasGuidInfo();
+    BOOL HasGuidInfo();
+    void SetHasCCWTemplate();
+    BOOL HasCCWTemplate();
+    void SetHasRCWPerTypeData();
+    BOOL HasRCWPerTypeData();
+
+#### 泛型实例化字典
+MethodTable中PerInstInfo指针指向对于每一个泛型实例化都有的指针表，这个表里面的指针指向了一个实例化字典。对于一个已经实例化的泛型，最后一个指针指向对应当前Method Table的字典，前面的项都指向继承链上父类的字典。实例化的泛型接口与结构体仅仅只有一个字典(自己的)，因为对于他们而言没有继承。
+
+GetNumDicts()给出字典的个数。
+
+将指针放在VTable之中而不是另外一个单独的表中。这样做的好处有:
+1.时间上:省掉了不必要的间接查找，因为不需要先访问PerInstInfo来获取表。
+2.空间上:不需要单独的PerInstInfo成员了，省掉了一个字的空间。
+但问题是，很多代码都假定VTable全是整齐的MethodDescriptor Stub，而没有料到会有其余指针。
+
+对当前Method Table的字典仅仅是一个储存泛型参数类型句柄的数组罢了，这些泛型参数需要满足:要么是已经实例化的泛型接口，要么是没有被共享的实例化类型。否则这个字典就会以这些参数开头，紧随其后的是固定数量的句柄Slot(类型与方法)，他们都是在运行时才被惰性填充的。最后这里有一个"溢出桶"指针，当字典被填满后，这个指针将被使用。总结起来这个字典的的形式是这样的。
+
+    类型句柄1   第一个满足要求的泛型参数的类型句柄
+    ...
+    类型句柄n   第n个满足要求泛型参数的类型句柄
+    Slot 1      第一个运行时句柄
+    ...
+    Slot n      第n个运行时句柄
+    "溢出桶"指针
+溢出桶指针仅包含运行时的句柄，另外的一个选择是，把多个bucket链起来。这样做好处是当字典增长时，不需要回收内存。但坏处是在运行时需要更多的间接查找。
+
+字典的排布是被GetClass()->GetDictionaryLayout()所决定的，因此在不相容实例化之间，排布可能发生变化。这在泛型参数中有个别类型被共享或没有被共享时很有用。比如考虑一个具有两个参数的泛型类 Dictionary<K,V> ，在实例化 Dictionary<double,string> 上，任何对K(这里也就是double类型)的引用都是在JIT编译时可知的。但是任意包含V的Token必须拥有一个字典项。从另一方面来说，对于与 Dictionary<double,string> 共享的实例反过来也成立。
+
 
 #### 托管对象
 
