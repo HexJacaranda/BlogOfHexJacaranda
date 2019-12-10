@@ -1766,16 +1766,679 @@ GetNumDicts()给出字典的个数。
 
 字典的排布是被GetClass()->GetDictionaryLayout()所决定的，因此在不相容实例化之间，排布可能发生变化。这在泛型参数中有个别类型被共享或没有被共享时很有用。比如考虑一个具有两个参数的泛型类 Dictionary<K,V> ，在实例化 Dictionary<double,string> 上，任何对K(这里也就是double类型)的引用都是在JIT编译时可知的。但是任意包含V的Token必须拥有一个字典项。从另一方面来说，对于与 Dictionary<double,string> 共享的实例反过来也成立。
 
+    DPTR(PerInstInfoElem_t) GetPerInstInfo()
+    {
+        _ASSERTE(HasPerInstInfo());
+        return ReadPointer(this, &MethodTable::m_pPerInstInfo);
+    }
 
+    PTR_GenericsDictInfo GetGenericsDictInfo()
+    {
+        //泛型字典信息被储存在字典的负偏移处
+        return dac_cast<PTR_GenericsDictInfo>(GetPerInstInfo()) - 1;
+    }
+
+    //如果此类型已经被实例化，返回字典的指针
+    //如果没有，返回null
+    PTR_Dictionary GetDictionary()
+    {
+        if (HasInstantiation())
+        {
+            //获取最后一个Slot指针
+            TADDR base = dac_cast<TADDR>(&(GetPerInstInfo()[GetNumDicts()-1]));
+            return PerInstInfoElem_t::GetValueMaybeNullAtPtr(base);
+        }
+        else
+        {
+            return NULL;
+        }
+    }
+返回父类中用于翻译元数据的合适替代。
+打个比方，当前类的定义是:
+    
+    Class<T> : Parent<List<T>,T[]>
+那么对于此类型的 Parent<!0,!1> 将是，0 --> List<T>, 1 --> T[]，以这样的顺序被添加到替代的链上。
+假如Parent的定义是:
+
+    Parent<T,U> : Super<Dictionary<T,U>>
+那么下一个对Super<!0>的下一个合适替代将是：0 --> Dictionaruy<List<T>,T[]>
+
+    Substitution GetSubstitutionForParent(const Substitution *pSubst)
+    {
+        mdToken crExtends;
+        DWORD   dwAttrClass;
+        if (IsArray())
+        {
+            return Substitution(GetModule(), SigPointer(), pSubst);
+        }
+        IfFailThrow(GetMDImport()->GetTypeDefProps(
+            GetCl(), 
+            &dwAttrClass, 
+            &crExtends));
+        return Substitution(crExtends, GetModule(), pSubst);
+    }
+
+    inline DWORD GetAttrClass()
+    {
+        return GetClass()->GetAttrClass();
+    }
+
+    inline BOOL HasFieldsWhichMustBeInited()
+    {
+        return GetClass()->HasFieldsWhichMustBeInited();
+    }
+
+    inline BOOL IsPreRestored() const
+    {
+    #ifdef FEATURE_PREJIT
+        return GetFlag(enum_flag_IsPreRestored);
+    #else
+        return FALSE;
+    #endif
+    }
 #### 托管对象
+m_ExposedClassObject是对应此类型的运行时类型实例。但是不要对数组或者远程对象使用。所有对象数组都共享同一份MethodTable/EEClass。对泛型来讲，此数据为一个实例拥有一个。
 
+    OBJECTREF GetManagedClassObject()
+    {
+        if (GetWriteableData()->m_hExposedClassObject == NULL)
+        {
+            //确保已经从本机映像中恢复了
+            CheckRestore();
+            REFLECTCLASSBASEREF  refClass = NULL;
+            GCPROTECT_BEGIN(refClass);
+            refClass = (REFLECTCLASSBASEREF) AllocateObject(g_pRuntimeTypeClass);
+            LoaderAllocator *pLoaderAllocator = GetLoaderAllocator();
+            ((ReflectClassBaseObject*)OBJECTREFToObject(refClass))->SetType(TypeHandle(this));
+            ((ReflectClassBaseObject*)OBJECTREFToObject(refClass))->SetKeepAlive(pLoaderAllocator->GetExposedObject());
+            LOADERHANDLE exposedClassObjectHandle = pLoaderAllocator->AllocateHandle(refClass);
+            //让所有的线程在此进行竞争，只有获胜者能将m_ExposedClassObject赋值
+            if (FastInterlockCompareExchangePointer(&(EnsureWritablePages(GetWriteableDataForWrite())->m_hExposedClassObject), exposedClassObjectHandle, static_cast<LOADERHANDLE>(NULL)))
+            {
+                pLoaderAllocator->FreeHandle(exposedClassObjectHandle);
+            }
+            GCPROTECT_END();
+        }
+        RETURN(GetManagedClassObjectIfExists());
+    }
+    OBJECTREF GetManagedClassObjectIfExists()
+    {
+        LOADERHANDLE handle = GetWriteableData_NoLogging()->GetExposedClassObjectHandle();
+        //GET_LOADERHANDLE_VALUE_FAST宏在此处被内联好让我们在返回值为非null时给予编译器提示
+        if (!LoaderAllocator::GetHandleValueFast(handle, &retVal) &&
+        !GetLoaderAllocator()->GetHandleValueFastPhase2(handle, &retVal))
+        {
+            return NULL;
+        }
+        COMPILER_ASSUME(retVal != NULL);
+        return retVal;
+    }
 #### GUID信息
+在进行COM交互时获取GUID(IID与CLSID)使用
+
+    PTR_GuidInfo GetGuidInfo();
+    void SetGuidInfo(GuidInfo* pGuidInfo);
+获取并且缓存此接口/类型的GUID
+
+    HRESULT GetGuidNoThrow(GUID *pGuid, BOOL bGenerateIfNotFound, BOOL bClassic = TRUE);
+    void    GetGuid(GUID *pGuid, BOOL bGenerateIfNotFound, BOOL bClassic = TRUE);
+
+#ifdef FEATURE_COMINTEROP
+获取用于WinRT交互的GUID，对于投影的泛型接口返回等效的WinRT类型的GUID(例如List<T> -> IVector<T>)
+
+    BOOL    GetGuidForWinRT(GUID *pGuid)
+    {
+        BOOL bRes = FALSE;
+        if ((IsProjectedFromWinRT() && !HasInstantiation()) || 
+            (SupportsGenericInterop(TypeHandle::Interop_NativeToManaged) && IsLegalNonArrayWinRTType()))
+        {
+            bRes = SUCCEEDED(GetGuidNoThrow(pGuid, TRUE, FALSE));
+        }
+        return bRes;
+    }
+
+构造对每一个类型的RCW数据
+
+    RCWPerTypeData *CreateRCWPerTypeData(bool bThrowOnOOM)
+    {
+        AllocMemTracker amTracker;
+        RCWPerTypeData *pData;
+        if (bThrowOnOOM)
+        {
+            //在低频堆分配后进行追踪
+            TaggedMemAllocPtr ptr = GetLoaderAllocator()->GetLowFrequencyHeap()->AllocMem(S_SIZE_T(sizeof(RCWPerTypeData)));
+            pData = (RCWPerTypeData *)amTracker.Track(ptr);
+        }
+        else
+        {
+            TaggedMemAllocPtr ptr = GetLoaderAllocator()->GetLowFrequencyHeap()->AllocMem_NoThrow(S_SIZE_T(sizeof(RCWPerTypeData)));
+            pData = (RCWPerTypeData *)amTracker.Track_NoThrow(ptr);
+            if (pData == NULL)
+            {
+                return NULL;
+            }
+        }
+        //分配的内存都被0初始化了，所有的都还没有被计算
+        _ASSERTE(pData->m_dwFlags == 0);
+        RCWPerTypeData **pDataPtr = GetRCWPerTypeDataPtr();
+        if (bThrowOnOOM)
+        {
+            EnsureWritablePages(pDataPtr);
+        }
+        else
+        {
+            if (!EnsureWritablePagesNoThrow(pDataPtr, sizeof(*pDataPtr)))
+            {
+                return NULL;
+            }
+        }
+        if (InterlockedCompareExchangeT(pDataPtr, pData, NULL) == NULL)
+        {
+            amTracker.SuppressRelease();
+        }
+        else
+        {
+            pData = *pDataPtr;
+        }
+        return pData;
+    }
+获取与此类型关联的RCW数据，如果此类型不需要这样的数据或者分配失败了，此函数返回null(当且仅当ThrowOnOOM为false)
+
+    RCWPerTypeData *GetRCWPerTypeData(bool bThrowOnOOM = true)
+    {
+        if (!HasRCWPerTypeData())
+        return NULL;
+        RCWPerTypeData *pData = *GetRCWPerTypeDataPtr();
+        if (pData == NULL)
+        {
+            pData = CreateRCWPerTypeData(bThrowOnOOM);
+        } 
+        return pData;
+    }
 
 #### 嵌套类-MethodData
-#### 嵌套类-MethodDataObject
-#### 嵌套类-MethodDataInterface
-#### 嵌套类-MethodDataInterfaceImpl
-#### 嵌套类-MethodIterator
-#### 嵌套类-IntroducedMethodIterator
+MethodData是用于储存方法具体数据的类型，其实为数据 + 纯虚函数，供继承者实现。这里我们只列出成员以及函数签名
+    
+    用于储存方法被引用的次数
+    ULONG m_cRef;
+    方法实现所在的表
+    MethodTable *const m_pImplMT;
+    方法定义所在的表
+    MethodTable *const m_pDeclMT;
+    用于表示Slot无效的数目
+    static const UINT32 INVALID_SLOT_NUMBER = UINT32_MAX;
+纯虚方法签名一览
 
-#### 实例字段
+        virtual MethodData  *GetDeclMethodData() = 0;
+        virtual MethodDesc  *GetDeclMethodDesc(UINT32 slotNumber) = 0; 
+        virtual MethodData  *GetImplMethodData() = 0;
+        virtual DispatchSlot GetImplSlot(UINT32 slotNumber) = 0;
+        virtual UINT32       GetImplSlotNumber(UINT32 slotNumber) = 0;
+        virtual MethodDesc  *GetImplMethodDesc(UINT32 slotNumber) = 0;
+        virtual void InvalidateCachedVirtualSlot(UINT32 slotNumber) = 0;
+        virtual UINT32 GetNumVirtuals() = 0;
+        virtual UINT32 GetNumMethods() = 0;
+非虚方法。
+对MethodData对象进行引用计数
+
+        inline ULONG AddRef()
+        { 
+            return (ULONG) InterlockedIncrement((LONG*)&m_cRef); 
+        }
+        ULONG Release()
+        {
+            //必须调整此函数使用其他备选的分配器使得在Debug线程上不会造成潜在的死锁
+            SUPPRESS_ALLOCATION_ASSERTS_IN_THIS_SCOPE;
+            ULONG cRef = (ULONG) InterlockedDecrement((LONG*)&m_cRef);
+            if (cRef == 0) {
+                delete this;
+            }
+            return (cRef);
+        }
+
+        static void HolderAcquire(MethodData *pEntry)
+        { 
+            return; 
+        }
+        static void HolderRelease(MethodData *pEntry)
+        {
+            if (pEntry != NULL) 
+                pEntry->Release(); 
+        }
+
+        MethodTable *GetDeclMethodTable() { return m_pDeclMT; }
+        MethodTable *GetImplMethodTable() { return m_pImplMT; }
+
+#### 嵌套类-MethodData->MethodDataEntry
+此类型在构建MethodData时被使用
+字段:
+
+    无效Chain与Index数
+    static const UINT32 INVALID_CHAIN_AND_INDEX = (UINT32)(-1);
+    无效Slot数
+    static const UINT16 INVALID_IMPL_SLOT_NUM = (UINT16)(-1);
+    此字段同时包含链偏移和表索引。把他们放到一起的原因是:
+    我们需要同时对这两个变量进行原子更新，因此如果他们都UINT16大小，就可以凑成一个UINT32
+    UINT32           m_chainDeltaAndTableIndex;
+    此字段针对被虚拟化(virtual)重映射的方法Slot
+    UINT16           m_implSlotNum;
+    在调度实现表中的入口
+    DispatchSlot     m_slot;   
+    此Slot的MethodDescriptor         
+    MethodDesc      *m_pMD;
+因为其余的方法都是对应的字段访问包装，这里不再列出，唯一一个值得关注的是:
+
+    static void ProcessMap(
+            const DispatchMapTypeID * rgTypeIDs, 
+            UINT32                    cTypeIDs, 
+            MethodTable *             pMT, 
+            UINT32                    cCurrentChainDepth, 
+            MethodDataEntry *         rgWorkingData)
+    {
+        for (DispatchMap::EncodedMapIterator it(pMT); it.IsValid(); it.Next())
+        {
+            for (UINT32 nTypeIDIndex = 0; nTypeIDIndex < cTypeIDs; nTypeIDIndex++)
+            {
+                if (it.Entry()->GetTypeID() == rgTypeIDs[nTypeIDIndex])
+                {
+                    UINT32 curSlot = it.Entry()->GetSlotNumber();
+                    if ((curSlot < pMT->GetNumVirtuals()) || (iCurrentChainDepth == 0))
+                    {
+                        MethodDataEntry * pCurEntry = &rgWorkingData[curSlot];
+                        if (!pCurEntry->IsDeclInit() && !pCurEntry->IsImplInit())
+                        {
+                            pCurEntry->SetImplData(it.Entry()->GetTargetSlotNumber());
+                        }
+                    }
+                }
+            }
+        }
+    }
+#### 嵌套类-MethodDataObject
+此类型紧接其后，继承自MethodData并实现了所有签名的虚方法。其字段为:
+
+    //此字段被用于阶段性图解码，其表示了下一个我们需要解码的类型
+    UINT32       m_iNextChainDepth;
+    static const UINT32 MAX_CHAIN_DEPTH = UINT32_MAX;    
+    BOOL m_containsMethodImpl;
+下面是虚函数的实现:
+
+    virtual MethodData  *GetDeclMethodData()
+    { 
+        return this;
+    }
+    virtual MethodData  *GetImplMethodData()
+    { 
+        return this; 
+    }
+
+    virtual MethodDesc *GetDeclMethodDesc(UINT32 slotNumber)
+    {
+        //获取对应Slot的入口点
+        MethodDataObjectEntry * pEntry = GetEntry(slotNumber);
+        //一次填充继承链上的一级入口，当我们遇到需要的Method Descriptpr被填充时，就停下来
+        while (!pEntry->GetDeclMethodDesc() && PopulateNextLevel());
+        //尝试获取Method Descriptor
+        MethodDesc * pMDRet = pEntry->GetDeclMethodDesc();
+        if (pMDRet == NULL)
+        {
+            //如果是空，就尝试从方法实现Method Descriptor获取声明
+            pMDRet = GetImplMethodDesc(slotNumber)->GetDeclMethodDesc(slotNumber);
+            _ASSERTE(CheckPointer(pMDRet));
+            //设置对应入口的声明Method Descriptor
+            pEntry->SetDeclMethodDesc(pMDRet);
+        }
+        else
+        {
+            //否则校验是否与已有数据一致
+            _ASSERTE(pMDRet == GetImplMethodDesc(slotNumber)->GetDeclMethodDesc(slotNumber));
+        }
+        return pMDRet;
+    }
+
+    virtual DispatchSlot GetImplSlot(UINT32 slotNumber)
+    {
+        //断言Slot数
+        _ASSERTE(slotNumber < GetNumMethods());
+        //直接构造调度Slot
+        return DispatchSlot(m_pDeclMT->GetRestoredSlot(slotNumber));
+    }
+此函数获取实现方法的Slot数，因为实现表还未被引入，我们使用的仍然是传统VTable，因此不存在额外映射关系。
+
+    UINT32 MethodTable::MethodDataObject::GetImplSlotNumber(UINT32 slotNumber)
+    { 
+        _ASSERTE(slotNumber < GetNumMethods());
+        return slotNumber;
+    }
+获取Slot对应的方法实现Method Descriptor
+
+    virtual MethodDesc  *GetImplMethodDesc(UINT32 slotNumber)
+    {
+        _ASSERTE(slotNumber < GetNumMethods());
+        MethodDataObjectEntry *pEntry = GetEntry(slotNumber);
+        while (!pEntry->GetImplMethodDesc() && PopulateNextLevel());
+        //获取实现MethodDescriptor
+        MethodDesc *pMDRet = pEntry->GetImplMethodDesc();
+        if (pMDRet == NULL)
+        {
+            //如果没有，就表示此Slot对应的必为虚方法
+            _ASSERTE(slotNumber < GetNumVirtuals());
+            //尝试在声明中查找此方法的Method Descriptor
+            pMDRet = m_pDeclMT->GetMethodDescForSlot(slotNumber);
+            _ASSERTE(CheckPointer(pMDRet));
+            //将实现方法Method Descriptor设置为声明方法的Method Descriptor
+            pEntry->SetImplMethodDesc(pMDRet);
+        }
+        else
+        {
+            //否则的话，要么此方法非虚，要么此方法实现Method Descriptor被设置为声明方法Method Descriptor
+            _ASSERTE(slotNumber >= GetNumVirtuals() || pMDRet == m_pDeclMT->GetMethodDescForSlot(slotNumber));
+        }
+        return pMDRet;
+    }
+此函数的潜在逻辑就是，如果没有找到实现Method Descriptor，那么一定是虚方法，然后将虚方法的Entry的实现与声明设置为一样的。找到的，要么是非虚方法，要么是已经被设置的虚方法Entry。
+
+无效化缓存的Virtual Slot
+
+    virtual void InvalidateCachedVirtualSlot(UINT32 slotNumber)
+    {
+        _ASSERTE(slotNumber < GetNumVirtuals());
+        MethodDataObjectEntry *pEntry = GetEntry(slotNumber);
+        pEntry->SetImplMethodDesc(NULL);
+    }
+
+初始化当前MethodDataObject
+
+    void Init(MethodData *pParentData)
+    {
+        m_iNextChainDepth = 0;
+        m_containsMethodImpl = FALSE;
+        ZeroMemory(GetEntryData(), sizeof(MethodDataObjectEntry) * GetNumMethods());
+    }
+激活下一个级别的MethodDataObject
+
+    BOOL PopulateNextLevel()
+    {
+        UINT32 iChainDepth = GetNextChainDepth();
+        //如果链深度是此值，那么我们已经处理了所有的父类
+        if (iChainDepth == MAX_CHAIN_DEPTH) {
+            return FALSE;
+        }
+        //现在随着链移动到目标上去
+        MethodTable *pMTCur = m_pDeclMT;
+        for (UINT32 i = 0; pMTCur != NULL && i < iChainDepth; i++) {
+            pMTCur = pMTCur->GetParentMethodTable();
+        }
+        //如果已经到了尽头，我们就结束了
+        if (pMTCur == NULL) {
+            //设置标记
+            SetNextChainDepth(MAX_CHAIN_DEPTH);
+            return FALSE;
+        }
+        //为祖先节点设置入口数据
+        FillEntryDataForAncestor(pMTCur);
+        //链深度加一
+        SetNextChainDepth(iChainDepth + 1);
+        return TRUE;
+    }
+
+这里面的MethodDataObjectEntry长相简单，只是一个键值对的形式，其余访问函数被忽略掉了。
+
+    struct MethodDataObjectEntry
+    {
+        MethodDesc *m_pMDDecl;
+        MethodDesc *m_pMDImpl;
+    }
+获取Entry数据入口，这里可以看得出，此函数结尾就是一个数组，因此不能被继承。
+
+    inline MethodDataObjectEntry *GetEntryData()
+    { 
+        return (MethodDataObjectEntry *)(this + 1); 
+    }
+
+    inline MethodDataObjectEntry *GetEntry(UINT32 i)
+    {
+        CONSISTENCY_CHECK(i < GetNumMethods()); 
+        return GetEntryData() + i;
+    }
+接下来就是相对重要的函数，透过此函数的实现与注释我们可以了解到整个MethodDataObject的机制。
+
+因为我们从继承链的最底端遍历到最顶端，第一个我们我们遇到的Slot对应的方法通常是一个声明和实现兼有的Method Descriptor。
+然而如果这个Slot是一个MethodImpl的目标，那么pMD也就是不必要的了。我们在继承链上寻找到虚方法的实现时保守地避免填充而不是在每Slot一个的基础上追踪。
+需要注意的是，可能在继承链更高的位置上有我们还没看见的方法实现，并且我们将会在到达那个级别之后才会填充虚方法。这样子做是安全的，因为我们填充过的Slot已经被子类引入或者重写了，并且这样会比任意继承的方法实现的优先级高。
+在我们填充入口数据之前，先判断当前的祖先是否有任何的方法实现。
+
+    void FillEntryDataForAncestor(MethodTable *pMT)
+    {
+        if (pMT->GetClass()->ContainsMethodImpls())
+            m_containsMethodImpl = TRUE;
+        if (m_containsMethodImpl && pMT != m_pDeclMT)
+            return;
+        MethodTable::IntroducedMethodIterator it(pMT, FALSE);
+        for (; it.IsValid(); it.Next())
+        {
+            MethodDesc * pMD = it.GetMethodDesc();
+            g_IBCLogger.LogMethodDescAccess(pMD);
+            unsigned slot = pMD->GetSlot();
+            if (slot == MethodTable::NO_SLOT)
+                continue;
+            //我们想要填充所有被我们想要收集数据的类型所引入的方法，还有那些继承链以上的虚方法
+            if (pMT == m_pDeclMT)
+            {
+                if (m_containsMethodImpl && slot < nVirtuals)
+                    continue;
+            }
+            else
+            {
+                if (slot >= nVirtuals)
+                    continue;
+            }
+            MethodDataObjectEntry * pEntry = GetEntry(slot);
+            if (pEntry->GetDeclMethodDesc() == NULL)
+            {
+                pEntry->SetDeclMethodDesc(pMD);
+            }
+            if (pEntry->GetImplMethodDesc() == NULL)
+            {
+                pEntry->SetImplMethodDesc(pMD);
+            }
+        }
+    }
+#### 嵌套类-MethodDataInterface
+此类型与MethodDataObject相似，只不过是针对接口的，其GetImplMethodDesc转发到GetDeclMethodDesc，而也对应地没有Virtual Slot缓存。
+#### 嵌套类-MethodDataInterfaceImpl
+此类型对应接口的实现数据，不过仍然有一些细节需要被提出来。在处理Impl数据获取时，相关API:
+
+        virtual DispatchSlot GetImplSlot(UINT32 slotNumber);
+        virtual UINT32       GetImplSlotNumber(UINT32 slotNumber);
+        virtual MethodDesc  *GetImplMethodDesc(UINT32 slotNumber);
+都使用了另外一个函数:MapToImplSlotNumber
+
+    UINT32 implSlotNumber = MapToImplSlotNumber(slotNumber);
+说明在做接口的实现获取时，需要先从原有的Slot映射到当前VTable可用的索引上。
+
+    UINT32 MapToImplSlotNumber(UINT32 slotNumber)
+    {
+        _ASSERTE(slotNumber < GetNumMethods());
+        //获取Entry
+        MethodDataEntry *pEntry = GetEntry(slotNumber);
+        //惰性激活MethodDescriptor
+        while (!pEntry->IsImplInit() && PopulateNextLevel()) {}
+        if (pEntry->IsImplInit()) {
+            //从Entry获取实现方法的索引
+            return pEntry->GetImplSlotNum();
+        }
+        else {
+            return INVALID_SLOT_NUMBER;
+        }
+    }
+这里也就解释了之前Entry中的Slot成员被用于虚拟化重映射，指的就是类在实现了接口方法后又将其标记为virtual使得子类可以重写此方法所需要的重映射。
+#### MehtodData相关字段及API
+    static MethodDataCache *s_pMethodDataCache;
+    static BOOL             s_fUseParentMethodData;
+    static BOOL             s_fUseMethodDataCache;
+允许方法数据缓存
+
+    static void AllowMethodDataCaching()
+    {
+        CheckInitMethodDataCache(); 
+        s_fUseMethodDataCache = TRUE;
+    }
+清除方法数据缓存
+
+    static void ClearMethodDataCache()
+    {
+        if (s_pMethodDataCache != NULL) {
+            s_pMethodDataCache->Clear();
+        }
+    }
+允许拷贝父类方法数据
+
+    static void AllowParentMethodDataCopy()
+    {
+        s_fUseParentMethodData = TRUE; 
+    }
+fCanCache参数决定了返回的方法数据能否被添加进全局的缓存中。此标志在请求一个正在被构建的类型的方法数据时被使用。
+
+    static MethodData *GetMethodData(MethodTable *pMT, BOOL fCanCache = TRUE)
+    {
+        return GetMethodData(pMT, pMT, fCanCache);
+    }
+
+    static MethodData *GetMethodData(MethodTable *pMTDecl, MethodTable *pMTImpl, BOOL fCanCache = TRUE)
+    {
+        MethodDataWrapper hData(GetMethodDataHelper(pMTDecl, pMTImpl, fCanCache));
+        hData.SuppressRelease();
+        return hData;
+    }
+此函数被BuildMethodTable类所使用，因为具体的接口还没有被加载进来。此函数也不会储存缓存。
+
+    static MethodData * GetMethodData(
+        const DispatchMapTypeID * rgDeclTypeIDs, 
+        UINT32                    cDeclTypeIDs, 
+        MethodTable *             pMTDecl, 
+        MethodTable *             pMTImpl)
+    {
+        MethodDataWrapper hData(GetMethodDataHelper(rgDeclTypeIDs, cDeclTypeIDs, pMTDecl, pMTImpl));
+        hData.SuppressRelease();
+        return hData;
+    }
+拷贝Slot
+
+    void CopySlotFrom(UINT32 slotNumber, MethodDataWrapper &hSourceMTData, MethodTable *pSourceMT)
+    {
+        //获取实现Method Descriptor
+        MethodDesc *pMD = hSourceMTData->GetImplMethodDesc(slotNumber);
+        _ASSERTE(CheckPointer(pMD));
+        _ASSERTE(pMD == pSourceMT->GetMethodDescForSlot(slotNumber));
+        SetSlot(slotNumber, pMD->GetInitialEntryPointForCopiedSlot());
+    }
+检查并初始化方法数据缓存
+
+    static void CheckInitMethodDataCache()
+    {
+        if (s_pMethodDataCache == NULL)
+        {
+            UINT32 cb = MethodDataCache::GetObjectSize(8);
+            NewArrayHolder<BYTE> hb(new BYTE[cb]);
+            MethodDataCache *pCache = new (hb.GetValue()) MethodDataCache(8);
+            if (InterlockedCompareExchangeT(
+                    &s_pMethodDataCache, pCache, NULL) == NULL)
+            {
+                hb.SuppressRelease();
+            }
+            else
+            {
+                //如果其他的线程成功了，那么就直接返回并且让Holder负责清理工作
+                return;
+            }
+        }
+    }
+
+    static MethodData *FindParentMethodDataHelper(MethodTable *pMT)
+    {
+        MethodData *pData = NULL;
+        if (s_fUseMethodDataCache && s_fUseParentMethodData) {
+            if (!pMT->IsInterface()) {
+                //对于非共享的代码，此操作是不正确的(待修复)
+                MethodTable *pMTParent = pMT->GetParentMethodTable();
+                if (pMTParent != NULL) {
+                    pData = FindMethodDataHelper(pMTParent, pMTParent);
+                }
+            }
+        }
+        return pData;
+    }
+
+    static MethodData *FindMethodDataHelper(MethodTable *pMTDecl, MethodTable *pMTImpl)
+    {
+        return s_pMethodDataCache->Find(pMTDecl, pMTImpl);
+    }
+
+    static MethodData *GetMethodDataHelper(MethodTable *pMTDecl, MethodTable *pMTImpl, BOOL fCanCache)
+    {
+        SUPPRESS_ALLOCATION_ASSERTS_IN_THIS_SCOPE;
+        //先在缓存中寻找
+        if (s_fUseMethodDataCache) {
+            MethodData *pData = FindMethodDataHelper(pMTDecl, pMTImpl);
+            if (pData != NULL) {
+                return pData;
+            }
+        }
+        //如果我们到了这，意味着在缓存中没有任何入口
+        MethodData *pData = NULL;
+        if (pMTDecl == pMTImpl)
+        {
+            if (pMTDecl->IsInterface())}
+            {
+                //接口直接分配方法数据
+                pData = new MethodDataInterface(pMTDecl);
+            }
+            else
+            {
+                //否则分配Array并在第一个位置构造MethodDataObject
+                UINT32 cb = MethodDataObject::GetObjectSize(pMTDecl);
+                NewArrayHolder<BYTE> pb(new BYTE[cb]);
+                MethodDataHolder h(FindParentMethodDataHelper(pMTDecl));
+                pData = new (pb.GetValue()) MethodDataObject(pMTDecl, h.GetValue());
+                pb.SuppressRelease();
+            }
+        }
+        else
+        {
+            pData = GetMethodDataHelper(
+                NULL, 
+                0, 
+                pMTDecl, 
+                pMTImpl);
+        }
+        if (fCanCache && s_fUseMethodDataCache) {
+            s_pMethodDataCache->Insert(pData);
+        }
+        return pData;
+    }
+
+    static MethodData * GetMethodDataHelper(
+        const DispatchMapTypeID * rgDeclTypeIDs, 
+        UINT32                    cDeclTypeIDs, 
+        MethodTable *             pMTDecl, 
+        MethodTable *             pMTImpl)
+    {
+        SUPPRESS_ALLOCATION_ASSERTS_IN_THIS_SCOPE;
+        CONSISTENCY_CHECK(pMTDecl->IsInterface() && !pMTImpl->IsInterface());
+        //因为这是在BuildMethodTable中使用的自定义方法，所以不能被缓存 
+        MethodDataWrapper hDecl(GetMethodData(pMTDecl, FALSE));
+        MethodDataWrapper hImpl(GetMethodData(pMTImpl, FALSE));
+        UINT32 cb = MethodDataInterfaceImpl::GetObjectSize(pMTDecl);
+        NewArrayHolder<BYTE> pb(new BYTE[cb]);
+        MethodDataInterfaceImpl * pData = new (pb.GetValue()) MethodDataInterfaceImpl(rgDeclTypeIDs, cDeclTypeIDs, hDecl, hImpl);
+        pb.SuppressRelease();
+        return pData;
+    }
+#### 嵌套类-MethodIterator
+此类用于遍历所有方法，较为简单
+#### 嵌套类-IntroducedMethodIterator
+此类用于遍历当前类型引入的方法，新的静态方法，非虚方法，重写的父类方法。
+
+### 结语
+虽然对MethodTable的探索到这里就正式结束了，考虑到整个Method Table承担的责任很多，要点细节也很多，因此决定再追加一篇精要的总结来捋清楚Method Table内部外部的联系。实际上我们仍然有一些残余没有解析完成，例如VSD具体实现，Method Descriptor等，将会放在紧随其后的章节中进行剖析。
