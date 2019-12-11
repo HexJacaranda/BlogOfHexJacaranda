@@ -4,7 +4,9 @@ Canonical MT译作代表性 MT，其定义是，泛型全开放类型或者普�
 
 ## 排布
 废话不多说，直接上图:
+
 ![](https://github.com/HexJacaranda/BlogOfHexJacaranda/blob/master/images/Method%20Table%20Layout.jpg)
+
 这里读者便可以一览整个MT的内存排布了，再让我们深入一点，看看背后还有哪一些细节。
 
 ## 排布细节
@@ -31,7 +33,9 @@ Canonical MT译作代表性 MT，其定义是，泛型全开放类型或者普�
 10.非虚方法块槽位实际上也采用了内联化储存的技巧，当只有一个非虚方法时，其直接被存储在非虚方法块槽中。当有多个方法时则分配内存块。
 
 11.泛型实例化字典实际排布，先直接看图：
+
 ![](https://github.com/HexJacaranda/BlogOfHexJacaranda/blob/master/images/Generic%20Dictionary%20Layout.jpg)
+
 这里的句柄用于运行时存放类型，或者方法。溢出桶指针指向下一个桶，里面仅存放运行时句柄。
 
 ## 选读节 - 多用途槽排布计算 - 元编程的应用
