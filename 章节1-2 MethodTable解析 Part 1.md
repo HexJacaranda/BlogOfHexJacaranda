@@ -139,6 +139,7 @@
     BOOL MethodDesc::SanityCheck()
     {
         //检查是否储存了其余内存
+        //检查是否已经恢复
         if (IsRestored())
         {
             //进一步校验
@@ -1290,7 +1291,7 @@
         #endif
             break;
             case CLASS_LOADED:
-                //检查NGen是否已经坐过这部分工作了
+                //检查NGen是否已经做过这部分工作了
                 if (!IsZapped() && 
                 !IsTypicalTypeDefinition() &&
                 !IsSharedByGenericInstantiations())

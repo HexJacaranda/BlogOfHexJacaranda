@@ -1635,7 +1635,7 @@ struct type{public int i;} 在x86下会返回ELEMENT_TYPE_I4而不是ELEMENT_TYP
         PRECONDITION(!IsInterface());
         SetFlag(enum_flag_IfNotInterfaceThenMarshalable);
     }
-接下来的函数仅对数组类型有效。这些Method Table可能被多个数组类型锁共享，因此GetArrayElementTypeHandle可能仅仅是一个大概的类型。如果你需要确切的元素类型那么你应当在TypeHandle对象，ArrayTypeDesc或者一个已知是Array的对象(比如BASEARRAYREF)的引用上调用GetArrayElementTypeHandle函数
+接下来的函数仅对数组类型有效。这些Method Table可能被多个数组类型所共享，因此GetArrayElementTypeHandle可能仅仅是一个大概的类型。如果你需要确切的元素类型那么你应当在TypeHandle对象，ArrayTypeDesc或者一个已知是Array的对象(比如BASEARRAYREF)的引用上调用GetArrayElementTypeHandle函数
 
     CorElementType GetArrayElementType()
     {
