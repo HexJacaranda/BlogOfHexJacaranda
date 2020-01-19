@@ -163,10 +163,10 @@ slotOffset也相对好读得多，如果索引为0或1，那么就直接取多�
 类型的完全加载需要其依赖全部被加载，这里依赖项指:父类，接口，代表性类型，经典类型
 
 ## 对象的大小限制
-虽然Conponent Size是16位的，但是所有计算对象大小的地方都使用了SIZE_T类型，因为支持大于2GB的对象是非常重要的。
+虽然Component Size是16位的，但是所有计算对象大小的地方都使用了SIZE_T类型，因为支持大于2GB的对象是非常重要的。
 
 ## System.Void 数组
-CoreCLR其实并没有阻止System.Void类型的数组存在，即使其Compinent Size为0。
+CoreCLR其实并没有阻止System.Void类型的数组存在，即使其Component Size为0。
 
 ## 三种CorElementType
 签名类型:表面上的
